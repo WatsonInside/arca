@@ -19334,3 +19334,16 @@ update-long | PASS | 通过 27   失败 0
 18 passed, 0 failed
 ```
 
+
+## 维护：仓库上线与默认值变更（2026-10-23 06:50，验收方执行）
+
+- `appUpdateRepo` 默认值：空 → `WatsonInside/arca`（settings.py:23）。隔离 HOME 实测新装默认生效；
+  本机既有 settings.json 已通过 API 同步为该值。
+- 重新构建：bundle 50M/683 files → package → publish；新 SHA256：dmg `ac112612…`、pkg `8db52546…`、
+  tar.xz `f4739d7b…`（sidecar 自洽）。新 DMG 内 app 通过 acceptance 22/0，运行时含 Security/LocalAuthentication。
+- GitHub：`WatsonInside/arca` 上线（Public/Apache-2.0），5 个语义提交 + tag v1.0.0；基线中的
+  .tmp/dist/release 垃圾经 git-filter-repo 移出历史（pack 264.6MB → 11.1MB），工作区文件保留；
+  Release v1.0.0 四资产摘要与本地一致。
+- A4 真实端到端：release app 检查线上 Release → current=1.0.0 / latest=1.0.0 / available=false。
+  环境说明：本沙箱内应用进程默认无可用出网代理，检查以「The read operation timed out」优雅失败；
+  显式 HTTPS_PROXY 下即时成功。建议下轮把该错误文案本地化。

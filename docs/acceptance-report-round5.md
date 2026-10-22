@@ -70,3 +70,23 @@
 A4 完整实现且探针通过；D2 实现正确、off 模式零变化、无静默迁移，touchid 模式受 A3 签名依赖
 （已独立复现 -34018 并证明根因）；门禁 18/18、产物与记录一致、bundle.py 改动未越界。
 **验收通过**，D2 的端到端功能待 A3 后复验。
+
+---
+
+## 附录：验收后维护操作（2026-10-23 06:50，验收方执行）
+
+1. **`appUpdateRepo` 默认值改为 `WatsonInside/arca`**（settings.py:23），并实测：
+   隔离 HOME 启动新装 → 默认值生效；本机既有 settings.json 仍为空（既有配置覆盖默认，
+   已通过 API 将本机设置同步为该仓库）。
+2. **重新构建产物**（bundle + package + publish），新 SHA256：
+   dmg `ac112612…f0978c`、pkg `8db52546…b32420`、tar.xz `f4739d7b…b98e09`（sidecar 自洽）。
+   新 DMG 内 app 通过全部 22 项验收探针；运行时含 Security/LocalAuthentication。
+3. **GitHub 仓库上线**：`github.com/WatsonInside/arca`（Public，Apache-2.0 已识别）。
+   提交历史 5 个语义提交 + tag `v1.0.0`；基线中的 .tmp/dist/release 垃圾已用
+   git-filter-repo 从历史移除（pack 264.6MB → 11.1MB），工作区文件未受影响。
+   Release `v1.0.0` 已发布，四个资产摘要与本地逐字一致。
+4. **A4 真实端到端**：以 release app 检查线上 Release → `current=1.0.0, latest=1.0.0,
+   available=false, error=None`（正确判定已是最新）。
+   环境观察（非产品缺陷）：本沙箱内应用进程默认拿不到可用出网代理，检查会以
+   「The read operation timed out」优雅失败；显式注入 HTTPS_PROXY 后立即成功。
+   该项错误文案可再友好化（原始 urllib 文案直接透出），建议下轮顺手处理。
