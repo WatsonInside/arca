@@ -14,13 +14,14 @@ DEFAULTS = {
     "excludeMeta": True,
     "overwrite": "rename",
     "encryptNames": True,
-    "saveTo": "",
     "appearance": "system",
-    "openWhenDone": False,
     "suppressSound": False,
+    "passwordAuth": "off",
     "rarPath": "",
     "threads": 0,
     "autoFolder": True,
+    "appUpdateRepo": "WatsonInside/arca",
+    "appSkipVersion": "",
     # Engine updates: check quietly on launch, and remember a version the user
     # asked not to be nagged about.
     "checkEngineUpdates": True,
@@ -39,7 +40,7 @@ DEFAULTS = {
     "serviceAutoStart": False,
 }
 
-ALLOWED = set(DEFAULTS)
+ALLOWED = set(DEFAULTS) - {"appSkipVersion"}
 
 
 class Settings:
@@ -50,8 +51,11 @@ class Settings:
         self._data = dict(DEFAULTS)
         if isinstance(raw, dict):
             for k, v in raw.items():
-                if k in ALLOWED:
+                if k in DEFAULTS and (k != "passwordAuth" or v in ("off", "touchid")):
                     self._data[k] = v
+        from .appupdate import valid_repo
+        if not valid_repo(self._data["appUpdateRepo"]):
+            self._data["appUpdateRepo"] = ""
         self._data["rarPath"] = self._data.get("rarPath") or ""
 
     def all(self) -> dict:
@@ -62,11 +66,21 @@ class Settings:
         with self._lock:
             return self._data.get(key, DEFAULTS.get(key, default))
 
+    def dismiss_app_version(self, value):
+        from .appupdate import version
+        version(value)
+        with self._lock:
+            self._data["appSkipVersion"] = value
+            util.write_json(self._path, self._data)
+
     def patch(self, values: dict) -> dict:
+        from .appupdate import valid_repo
+        if "appUpdateRepo" in (values or {}) and not valid_repo(values["appUpdateRepo"]):
+            raise ValueError("GitHub 仓库格式应为 owner/repo")
         with self._lock:
             for k, v in (values or {}).items():
-                if k in ALLOWED:
+                if k in ALLOWED and (k != "passwordAuth" or v in ("off", "touchid")):
                     self._data[k] = v
             data = dict(self._data)
-        util.write_json(self._path, data)
+            util.write_json(self._path, data)
         return data

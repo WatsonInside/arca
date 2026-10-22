@@ -107,11 +107,25 @@ async function api(path, body) {
 
 /* ------------------------------------------------------------------- toast */
 function toast(message, kind = 'info', iconId = null) {
+  const box = $('#toasts');
+  const existing = [...box.children].find((item) => item.dataset.message === message && item.dataset.kind === kind && !item.classList.contains('out'));
+  if (existing) {
+    const count = Number(existing.dataset.count || 1) + 1;
+    existing.dataset.count = String(count);
+    const label = existing.querySelector('.toast-text');
+    if (label) label.textContent = `${message} ×${count}`;
+    return;
+  }
+  while (box.children.length >= 3) box.firstElementChild.remove();
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
+  el.dataset.message = message;
+  el.dataset.kind = kind;
+  el.dataset.count = '1';
   const ic = iconId || (kind === 'ok' ? 'i-check-circle' : kind === 'err' ? 'i-alert' : 'i-info');
-  el.innerHTML = `${icon(ic, 'ic')}<span>${esc(message)}</span>`;
-  $('#toasts').appendChild(el);
+  el.innerHTML = `${icon(ic, 'ic')}<span class="toast-text">${esc(message)}</span>${kind === 'err' ? '<button class="toast-close" aria-label="关闭">×</button>' : ''}`;
+  box.appendChild(el);
+  if (kind === 'err') el.querySelector('.toast-close').addEventListener('click', () => el.remove());
   setTimeout(() => {
     el.classList.add('out');
     setTimeout(() => el.remove(), 260);
@@ -123,6 +137,7 @@ const state = {
   meta: null,
   settings: {},
   jobs: [],
+  history: [],
   view: 'compress',
   c: {
     items: [], format: '7z', level: 3, method: 'auto',
@@ -132,8 +147,8 @@ const state = {
     dest: '', name: '', touchedName: false,
     target: '', exists: false, busy: false,
   },
-  x: { path: '', info: null, pw: '', dest: '', autoFolder: true,
-       overwrite: 'rename', loading: false, error: '' },
+  x: { path: '', info: null, pw: '', remember: false, dest: '', autoFolder: true,
+       overwrite: 'rename', loading: false, error: '', expanded: false },
   jobStatus: {},
   pollTimer: 0,
   update: null,        // last engine-update check
@@ -296,6 +311,15 @@ function pwStrength(pw) {
 }
 const STRENGTH_TEXT = ['', '偏弱', '一般', '较强', '很强'];
 
+function refreshCompressPasswordHint() {
+  const { pw, format } = state.c;
+  const s = pwStrength(pw);
+  $('#c-pw-strength').dataset.s = String(s);
+  $('#c-pw-text').textContent = format === 'zip' && /[^\x00-\x7f]/.test(pw)
+    ? 'ZIP 格式暂不支持含中文等非 ASCII 字符的密码，请改用 7z 格式（同时会加密文件名，更安全）'
+    : (pw ? STRENGTH_TEXT[s] : '');
+}
+
 function genPassword(len = 16) {
   const alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_=+';
   const buf = new Uint32Array(len);
@@ -426,9 +450,7 @@ function renderCompress() {
   $('#c-split-hint').textContent = hint;
 
   // password
-  const s = pwStrength(c.pw);
-  $('#c-pw-strength').dataset.s = String(s);
-  $('#c-pw-text').textContent = c.pw ? STRENGTH_TEXT[s] : '';
+  refreshCompressPasswordHint();
   $('#c-names').setAttribute('aria-checked', String(c.encryptNames));
   $('#c-names-hint').textContent = '';
 
@@ -551,6 +573,8 @@ function renderExtract() {
   // leaving a screenful of dead air below it.
   $('#view-extract').classList.toggle('is-empty', !has);
   $('#x-error').classList.toggle('hidden', !x.error);
+  $('#x-show-all').classList.add('hidden');
+  if (!has || x.loading || x.error) x.expanded = false;
 
   if (!has) {
     $('#x-start').disabled = true;
@@ -570,6 +594,11 @@ function renderExtract() {
   if (info.par2Files) $('#x-chip-par2-t').textContent = `恢复记录 ${info.par2Files}`;
   $('#x-ratio').textContent = info.ratio ? `压缩率 ${Math.round(100 / Math.max(1, info.ratio))}%` : '';
   $('#x-pw-row').classList.toggle('hidden', !(info.needsPassword || info.encrypted));
+  $('#x-remember').setAttribute('aria-checked', String(x.remember));
+  $('#x-pw-status').textContent = x.error && (x.pw || info.savedPasswordUsed)
+    ? '密码可能不正确，可在设置中清除后重新保存'
+    : x.remember ? '密码可能不正确；保存后可在设置中删除重存'
+      : info.savedPasswordUsed ? '已使用记住的密码' : '';
 
   if (x.loading) {
     $('#x-table').innerHTML = `<tr><td colspan="3" style="padding:22px 16px;color:var(--ink-3)">正在读取目录…</td></tr>`;
@@ -600,16 +629,23 @@ function renderExtract() {
 
   const rows = (info.entries || []).filter((e) => !e.isDir);
   const dirs = (info.entries || []).filter((e) => e.isDir);
-  const show = [...dirs.slice(0, 40), ...rows].slice(0, 220);
+  const entries = x.error ? [] : [...dirs, ...rows];
+  const show = x.expanded ? entries : entries.slice(0, 200);
+  const more = $('#x-show-all');
+  more.classList.toggle('hidden', entries.length <= show.length);
+  more.textContent = `显示全部 ${entries.length} 条`;
   $('#x-table').innerHTML = show.length ? show.map((e) => `
     <tr data-entry="${esc(e.path)}">
       <td class="name ${e.isDir ? 'dir' : ''}">${icon(e.isDir ? 'i-folder' : 'i-file', 'lock-ic')} ${esc(e.path)}</td>
       <td class="num">${e.isDir ? '—' : fmtSize(e.size)}</td>
       <td>${esc((e.modified || '').slice(5).replace('T', ' ')) || '—'}</td>
-    </tr>`).join('') : `<tr><td colspan="3" style="padding:22px 16px;color:var(--ink-3)">空归档</td></tr>`;
+    </tr>`).join('') : `<tr><td colspan="3" style="padding:22px 16px;color:var(--ink-3)">${x.error ? '无法读取目录' : '空归档'}</td></tr>`;
 
-  const extra = (info.entriesTruncated || 0) + Math.max(0, (info.entries || []).length - show.length);
-  $('#x-more').textContent = extra > 0 ? `还有 ${extra} 项未显示` : `${rows.length} 个文件 · ${dirs.length} 个文件夹`;
+  const truncated = info.entriesTruncated || 0;
+  $('#x-more').textContent = x.error ? '目录读取失败'
+    : `${rows.length} 个文件 · ${dirs.length} 个文件夹`
+      + (show.length < entries.length ? ` · 已显示 ${show.length} 条` : '')
+      + (truncated > 0 ? ` · 另有 ${truncated} 条未返回（后端列表上限）` : '');
   $('#x-dest-text').textContent = x.dest ? midEllipsis(shortPath(x.dest), 34) : '与压缩包同目录';
   $('#x-folder').setAttribute('aria-checked', String(x.autoFolder));
   $('#x-over').value = x.overwrite;
@@ -750,15 +786,52 @@ function patchJobEl(el, job) {
   }
 }
 
+function historyPath(item) {
+  return (item.outputs && item.outputs[0]) || item.destPath || item.srcPath || '';
+}
+
+function historyLabel(item) {
+  return item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : '已取消';
+}
+
+function renderHistory(list) {
+  const history = state.history.slice(0, 20);
+  const sig = history.map((item) => `${item.id}:${item.status}:${item.finished || ''}`).join('|');
+  if (list.dataset.historySig === sig) return;
+  list.dataset.historySig = sig;
+  list.innerHTML = history.length ? `<div class="history-group">历史</div>${history.map((item) => {
+    const path = historyPath(item);
+    const result = item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷` : item.sizeText || historyLabel(item);
+    const reveal = path ? `<button class="icon-btn" data-reveal="${esc(path)}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>` : '';
+    return `<div class="job history-item" data-history="${esc(item.id)}">
+      <div class="job-ico ${esc(item.status || 'done')}">${icon(KIND_ICON[item.kind] || 'i-box')}</div>
+      <div class="job-main"><div class="job-top"><b>${esc(item.title || '历史任务')}</b><span class="pct">${esc(historyLabel(item))}</span></div>
+      <div class="job-sub">${esc(fmtDate(item.finished))}<span class="sep">·</span>${esc(result)}</div></div>
+      <div class="job-actions">${reveal}</div>
+    </div>`;
+  }).join('')}` : '';
+}
+
 function renderQueue() {
   const list = $('#q-list');
   const jobs = state.jobs;
-  $('#q-empty').classList.toggle('hidden', jobs.length > 0);
-  $('#q-meta').textContent = jobs.length ? `${jobs.length} 项` : '';
+  const showHistory = jobs.length === 0 && state.history.length > 0;
+  $('#q-empty').classList.toggle('hidden', jobs.length > 0 || showHistory);
+  $('#q-meta').textContent = jobs.length ? `${jobs.length} 项` : showHistory ? `${Math.min(state.history.length, 20)} 条历史` : '';
   const active = jobs.filter((j) => j.status === 'running').length;
   $('#nav-count').classList.toggle('hidden', active === 0);
   $('#nav-count').textContent = String(active);
 
+  if (showHistory) {
+    [...QNODES.values()].forEach((el) => { if (el.parentNode) el.remove(); });
+    QNODES.clear();
+    renderHistory(list);
+    return;
+  }
+  if (list.dataset.historySig) {
+    list.innerHTML = '';
+    list.dataset.historySig = '';
+  }
   const seen = new Set();
   queueNodeSync(jobs, list, seen);
 }
@@ -790,23 +863,20 @@ function renderRecent() {
   const box = $('#rail-recent');
   const list = $('#rail-recent-list');
   if (!box || !list) return;
-  const done = state.jobs
+  const current = state.jobs
     .filter((j) => j.status === 'done' || j.status === 'error' || j.status === 'canceled')
     .slice(0, 3);
+  const done = current.length ? current : state.history.slice(0, 3);
   box.classList.toggle('hidden', done.length === 0);
-  // Same rule as the queue: the rail re-renders on every poll, so swap the DOM
-  // only when the list itself changes.
-  const sig = done.map((j) => `${j.id}:${j.status}`).join('|');
+  const sig = done.map((j) => `${j.id}:${j.status}:${j.finished || ''}`).join('|');
   if (list.dataset.sig === sig) return;
   list.dataset.sig = sig;
   list.innerHTML = done.map((j) => {
-    const state = j.status === 'done' ? '完成' : j.status === 'error' ? '失败' : '已取消';
-    // The kind icon already says "compressed"; dropping the verb leaves room for
-    // the file name, which is the part worth reading in a 180px column.
+    const status = historyLabel(j);
     const name = String(j.title || '').replace(/^(压缩|解压|校验)\s*/, '');
     return `<button class="recent-item" data-recent="${esc(j.id)}"
-              title="${esc(j.title)} · ${state}">
-      <span class="recent-ico ${esc(j.status)}">${icon(KIND_ICON[j.kind] || 'i-box')}</span>
+              title="${esc(j.title)} · ${status}">
+      <span class="recent-ico ${esc(j.status || 'done')}">${icon(KIND_ICON[j.kind] || 'i-box')}</span>
       <span class="recent-name">${esc(name)}</span>
     </button>`;
   }).join('');
@@ -821,6 +891,14 @@ async function pollJobs() {
   try {
     const data = await api('/jobs');
     const jobs = data.jobs || [];
+    if (jobs.length === 0) {
+      const history = await api('/history');
+      state.history = history.history || [];
+    }
+    const liveIds = new Set(jobs.map((j) => j.id));
+    Object.keys(state.jobStatus).forEach((id) => {
+      if (!liveIds.has(id)) delete state.jobStatus[id];
+    });
     jobs.forEach((j) => {
       const prev = state.jobStatus[j.id];
       if (prev && prev !== j.status) {
@@ -912,15 +990,20 @@ async function loadArchive(path) {
   state.x.info = null;
   state.x.error = '';
   state.x.loading = true;
+  state.x.expanded = false;
   state.x.dest = dirName(path);
   state.x.pw = '';
+  state.x.remember = false;
+  $('#x-pw').value = '';
+  $('#x-pw').type = 'password';
   setView('extract');
   renderExtract();
   try {
     const r = await api('/inspect', { path });
     state.x.info = r.info;
     if (r.info.needsPassword) {
-      state.x.error = '';
+      state.x.error = r.info.savedPasswordUsed && !(r.info.entries || []).length
+        ? '记住的密码未能解锁，请在设置中清除后重新保存' : '';
       setTimeout(() => $('#x-pw').focus(), 60);
     }
   } catch (err) {
@@ -1081,6 +1164,7 @@ async function startExtract(onExists) {
     const r = await api('/extract', {
       path: x.path,
       password: x.pw,
+      remember: x.remember,
       info: x.info,
       destDir: x.dest || dirName(x.path),
       autoFolder: x.autoFolder,
@@ -1119,7 +1203,7 @@ async function testArchive() {
   const x = state.x;
   if (!x.path) return;
   try {
-    await api('/test', { path: x.path, password: x.pw, info: x.info });
+    await api('/test', { path: x.path, password: x.pw, remember: x.remember, info: x.info });
     setView('queue');
     refreshJobsNow();
   } catch (err) {
@@ -1656,6 +1740,7 @@ async function openSettings(focus) {
   // The Finder / association state lives outside the process, so it is read
   // fresh every time the sheet opens instead of being cached from /meta.
   await loadIntegration();
+  const saved = (await api('/settings')).savedPasswords || { count: 0, files: [] };
   const s = state.settings;
   const meta = state.meta || {};
   const integ = state.integration || { types: [], services: [], ours: 0, total: 0 };
@@ -1711,6 +1796,26 @@ async function openSettings(focus) {
         </div>
         <details class="sheet-fold">
           <summary>${icon('i-chevron')}<span>高级与排障</span><span class="fold-hint">WinRAR · 组件 · 快捷键</span></summary>
+          <details class="sheet-fold" id="set-app-about">
+            <summary>${icon('i-chevron')}<span>关于与应用更新</span></summary>
+            <div class="sheet-row">
+              <label>GitHub 仓库<small>owner/repo，留空关闭应用更新</small></label>
+              <input class="input" id="set-app-repo" aria-label="应用更新 GitHub 仓库" value="${esc(s.appUpdateRepo || '')}" placeholder="owner/repo" style="width:180px">
+              <button class="btn ghost" id="set-app-save">保存</button>
+            </div>
+            <div class="sheet-row">
+              <label>应用更新<small id="set-app-version">${s.appUpdateRepo ? '展开后读取应用版本' : '已关闭'}</small></label>
+              <button class="btn ghost" id="set-app-check" ${s.appUpdateRepo ? '' : 'disabled'}>检查应用更新…</button>
+            </div>
+          </details>
+          <div class="sheet-row">
+            <label id="set-saved-count">已记住 ${saved.count} 个加密包的密码<small>仅保存在 macOS 钥匙串，最多 50 个</small></label>
+            <button class="btn quiet" id="set-clear-passwords" ${saved.count ? '' : 'disabled'}>全部清除</button>
+          </div>
+          <div class="sheet-row">
+            <label id="set-password-auth-label">使用触控 ID 保护密码<small id="set-password-auth-help">开启后已记住的密码需重新保存才能受保护<br>无触控 ID 的 Mac 会改为要求登录密码</small></label>
+            <button class="toggle" id="set-password-auth" role="switch" aria-labelledby="set-password-auth-label" aria-describedby="set-password-auth-help" aria-checked="${s.passwordAuth === 'touchid' ? 'true' : 'false'}"></button>
+          </div>
           <div class="sheet-row">
             <label>跳过系统文件<small>.DS_Store、__MACOSX、._* 等</small></label>
             <button class="toggle" id="set-meta" role="switch" aria-checked="${s.excludeMeta ? 'true' : 'false'}"></button>
@@ -1829,10 +1934,35 @@ async function openSettings(focus) {
   ], s.appearance || 'system', (id) => {
     setAppearance(id);
   });
+  $('#set-clear-passwords', back).onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api('/settings', { clearSavedPasswords: true });
+      $('#set-saved-count', back).textContent = '已记住 0 个加密包的密码';
+      if (state.x.info) state.x.info.savedPasswordUsed = false;
+      renderExtract();
+      toast('已清除记住的密码', 'ok');
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, 'err');
+    }
+  };
   $('#set-format', back).value = s.format || '7z';
   $('#set-level', back).value = String(s.level ?? 3);
   $('#set-format', back).onchange = (e) => patchSettings({ format: e.target.value });
   $('#set-level', back).onchange = (e) => patchSettings({ level: Number(e.target.value) });
+  $('#set-password-auth', back).onclick = async (e) => {
+    const btn = e.currentTarget;
+    const next = btn.getAttribute('aria-checked') !== 'true';
+    btn.disabled = true;
+    try {
+      await patchSettings({ passwordAuth: next ? 'touchid' : 'off' });
+      btn.setAttribute('aria-checked', String(state.settings.passwordAuth === 'touchid'));
+    } finally {
+      btn.disabled = false;
+    }
+  };
   $('#set-meta', back).onclick = (e) => {
     const next = e.currentTarget.getAttribute('aria-checked') !== 'true';
     e.currentTarget.setAttribute('aria-checked', String(next));
@@ -1910,6 +2040,44 @@ async function openSettings(focus) {
     if (!info.ok) { toast(info.error || '检查更新失败', 'err'); return; }
     if (info.available) openEngineUpdate(info);
     else toast(`已是最新版本 7-Zip ${info.latest || info.current}`, 'ok');
+  };
+  async function loadAppUpdate(refresh = false) {
+    const info = (await api('/appupdate' + (refresh ? '?refresh=1' : ''))).update;
+    $('#set-app-version', back).textContent = info.recovery || (info.enabled
+      ? `Arca ${info.current || '?'}${info.available ? ' · ' + (info.skipped ? '已跳过 ' : '新版本 ') + info.latest : ''}` : `Arca ${info.current || '?'} · 应用更新已关闭`);
+    const button = $('#set-app-check', back);
+    button.disabled = !info.enabled;
+    button.textContent = info.available ? `新版本 ${info.latest} · 下载并更新` : '检查应用更新…';
+    return info;
+  }
+  $('#set-app-about', back).ontoggle = () => {
+    if ($('#set-app-about', back).open) loadAppUpdate().catch((err) => toast(err.message, 'err'));
+  };
+  $('#set-app-save', back).onclick = async () => {
+    try {
+      await patchSettings({ appUpdateRepo: $('#set-app-repo', back).value.trim() });
+      await loadAppUpdate();
+    } catch (err) { toast(err.message, 'err'); }
+  };
+  $('#set-app-check', back).onclick = async () => {
+    try {
+      let info = await loadAppUpdate();
+      const resuming = info.install && info.install.phase !== 'error';
+      if (!resuming) info = await loadAppUpdate(true);
+      if (!resuming && !info.ok) throw new Error(info.error || '检查应用更新失败');
+      if (!info.available && !info.install) { toast('应用已是最新版本', 'ok'); return; }
+      close();
+      openUpdateSheet(Object.assign({}, info, {
+        page: `https://github.com/${info.repo}/releases`,
+        highlights: info.highlights ? [{ tag: 'official', label: '应用', text: info.highlights }] : [],
+      }), {
+        id: 'app', title: '应用更新', chip: 'Arca', poll: '/appupdate', apply: '/appupdate/apply',
+        skip: true, dismiss: '/appupdate/dismiss',
+        doneText: () => '更新已就绪，重启应用生效',
+        toastText: () => '应用更新已就绪，重启应用生效',
+        note: '应用更新不会自动重启。新版本成功启动前保留旧应用以便恢复。',
+      });
+    } catch (err) { toast(err.message, 'err'); }
   };
   const reset = $('#set-updreset', back);
   if (reset) reset.onclick = async () => {
@@ -2087,8 +2255,7 @@ function openEngineUpdate(info, opts) {
   }, opts || {}));
 }
 
-/** Shared dialog for "upstream has something newer": engine and components
- *  differ only in where the check/apply calls go and in the copy. */
+/** Shared dialog for application, engine and component updates. */
 function openUpdateSheet(info, opts) {
   if (!info) return;
   const cur = info.currentVersion || (typeof info.current === 'string' ? info.current : '') || '?';
@@ -2278,7 +2445,7 @@ function openUpdateSheet(info, opts) {
     const inst = opts.id === '7zz'
       ? ((state.update && state.update.install) || {})
       : ((state.componentInstall && state.componentInstall[opts.id]) || {});
-    if (inst.phase === 'done') { close(); return; }
+    if (settled || inst.phase === 'done') { close(); return; }
     go.disabled = true;
     try {
       const r = await api(opts.apply, { version: latest, id: opts.id });
@@ -2294,15 +2461,23 @@ function openUpdateSheet(info, opts) {
   const skipBtn = $('#upd-skip', back);
   if (skipBtn && opts.skip) {
     skipBtn.onclick = async () => {
-      settled = true;
-      await patchSettings({ engineSkipVersion: latest });
-      if (state.update) state.update.skipped = true;
-      close();
-      toast(`已跳过 ${latest}，下次启动不再提示`, 'ok');
+      try {
+        if (opts.dismiss) await api(opts.dismiss, { version: latest });
+        else await patchSettings({ engineSkipVersion: latest });
+        settled = true;
+        if (!opts.dismiss && state.update) state.update.skipped = true;
+        close();
+        toast(opts.id === 'app' ? `已跳过应用版本 ${latest}，可手动重新检查`
+          : `已跳过 ${latest}，下次启动不再提示`, 'ok');
+      } catch (err) { toast(err.message, 'err'); }
     };
   }
 
   prog.classList.add('hidden');
+  if (opts.id === 'app' && info.install) {
+    paint(info.install);
+    if (!['done', 'error'].includes(info.install.phase)) poll();
+  }
 }
 
 /** Launch-time check: quiet about failures, loud only when there is news. */
@@ -2327,11 +2502,15 @@ function wireEvents() {
       const btn = e.target.closest('[data-recent]');
       if (!btn) return;
       setView('queue');
-      const card = $(`.job[data-job="${btn.dataset.recent}"]`);
+      const card = $(`.job[data-job="${btn.dataset.recent}"], .history-item[data-history="${btn.dataset.recent}"]`);
       if (card) {
         card.scrollIntoView({ block: 'center' });
         card.classList.add('is-target');
         setTimeout(() => card.classList.remove('is-target'), 1600);
+      } else {
+        const item = state.history.find((entry) => entry.id === btn.dataset.recent);
+        const path = item && historyPath(item);
+        if (path) native('reveal', { path });
       }
     });
   }
@@ -2394,9 +2573,7 @@ function wireEvents() {
   });
   $('#c-pw').addEventListener('input', (e) => {
     state.c.pw = e.target.value;
-    const s = pwStrength(state.c.pw);
-    $('#c-pw-strength').dataset.s = String(s);
-    $('#c-pw-text').textContent = state.c.pw ? STRENGTH_TEXT[s] : '';
+    refreshCompressPasswordHint();
     $('#c-names-row').classList.toggle('hidden', !(state.c.pw && state.c.format !== 'zip'));
     $('#c-outhint').textContent = buildOutHint();
   });
@@ -2412,9 +2589,7 @@ function wireEvents() {
     $('#c-pw').type = 'text';
     state.c.pw = pw;
     $('#c-pw-eye').innerHTML = icon('i-eye-off');
-    const s = pwStrength(pw);
-    $('#c-pw-strength').dataset.s = String(s);
-    $('#c-pw-text').textContent = STRENGTH_TEXT[s];
+    refreshCompressPasswordHint();
     $('#c-names-row').classList.toggle('hidden', !(state.c.pw && state.c.format !== 'zip'));
     $('#c-outhint').textContent = buildOutHint();
   });
@@ -2498,8 +2673,14 @@ function wireEvents() {
     const paths = await pick('archive', { multiple: false, prompt: '打开' });
     if (paths.length) loadArchive(paths[0]);
   });
+  $('#x-remember').addEventListener('click', () => {
+    state.x.remember = !state.x.remember;
+    renderExtract();
+  });
   $('#x-pw').addEventListener('input', (e) => {
     state.x.pw = e.target.value;
+    if (state.x.info) state.x.info.savedPasswordUsed = false;
+    $('#x-pw-status').textContent = state.x.remember ? '仅在本次解压或校验时保存到系统钥匙串' : '';
     // Unlock the start button as soon as a password exists -- without this the
     // locked state asks for a password but keeps the button disabled-looking.
     const locked = !!(state.x.info && state.x.info.needsPassword
@@ -2530,6 +2711,10 @@ function wireEvents() {
     renderExtract();
   });
   $('#x-over').addEventListener('change', (e) => { state.x.overwrite = e.target.value; renderExtract(); });
+  $('#x-show-all').addEventListener('click', () => {
+    state.x.expanded = true;
+    renderExtract();
+  });
   $('#x-start').addEventListener('click', startExtract);
   $('#x-test').addEventListener('click', testArchive);
 
@@ -2601,6 +2786,7 @@ async function init() {
   try {
     const meta = await api('/meta');
     state.meta = meta;
+    state.history = meta.history || [];
     state.settings = meta.settings || {};
     homeDir = meta.home || '';
     $('#engine-ver').textContent = `v${meta.engine.engineVersion} · 内置`;

@@ -1,4 +1,4 @@
-"""Background job queue: one worker, cancellable, progress + history."""
+"""Background job queue: two directory-isolated workers, progress + history."""
 from __future__ import annotations
 
 import os
@@ -10,6 +10,7 @@ import uuid
 from . import engine as eng
 from . import par2 as par2_mod
 from . import util
+from . import keyring
 from . import zipfix
 from . import zst
 
@@ -18,8 +19,8 @@ class Job:
     __slots__ = ("id", "kind", "title", "subtitle", "status", "percent", "phase",
                  "item", "speed", "eta", "total", "done", "outputs", "error",
                  "created", "started", "finished", "cancel", "result", "log",
-                 "srcPath", "destPath", "format", "sizeText", "inputs",
-                 "_lock", "_task")
+                 "srcPath", "destPath", "format", "sizeText", "inputs", "bucket",
+                 "_lock", "_task", "_secrets")
 
     def __init__(self, kind: str, title: str, **extra):
         self.id = uuid.uuid4().hex[:12]
@@ -44,16 +45,18 @@ class Job:
         self.log = ""
         self.srcPath = extra.get("srcPath", "")
         self.destPath = extra.get("destPath", "")
+        self.bucket = extra.get("bucket", "")
         self.format = extra.get("format", "")
         self.sizeText = ""
         # Kept so a finished compression can be repeated from its context menu
         # without the user re-picking every file.
         self.inputs = list(extra.get("inputs") or [])
         self._lock = threading.RLock()
+        self._secrets = tuple(p for p in extra.get("secrets", ()) if p)
 
     def to_dict(self):
         with self._lock:
-            return {
+            return keyring.redact({
                 "id": self.id, "kind": self.kind, "title": self.title,
                 "subtitle": self.subtitle, "status": self.status,
                 "percent": round(self.percent, 1), "phase": self.phase,
@@ -65,12 +68,12 @@ class Job:
                 "destPath": self.destPath, "format": self.format,
                 "sizeText": self.sizeText, "result": self.result,
                 "inputs": list(self.inputs),
-            }
+            }, self._secrets)
 
     def update(self, **kw):
         with self._lock:
             for k, v in kw.items():
-                setattr(self, k, v)
+                setattr(self, k, keyring.redact(v, self._secrets))
 
     def progress(self, percent, item="", speed=0.0):
         with self._lock:
@@ -79,7 +82,7 @@ class Job:
                 if self.total:
                     self.done = int(self.total * self.percent / 100.0)
             if item:
-                self.item = item
+                self.item = keyring.redact(item, self._secrets)
             if speed:
                 self.speed = speed
             if self.total and self.speed > 1 and self.percent < 100:
@@ -97,71 +100,89 @@ class JobManager:
         self.order: list[str] = []
         self._q: list[str] = []
         self._cv = threading.Condition()
-        self._worker = threading.Thread(target=self._loop, daemon=True)
-        self._worker.start()
+        self._buckets: dict[str, str] = {}
+        self._busy: set[str] = set()
+        self._targets: dict[str, str] = {}
         self.history = util.read_json(util.state_path("history.json"), [])
         self.history = self.history[:40] if isinstance(self.history, list) else []
+        self._workers = [threading.Thread(target=self._loop, daemon=True)
+                         for _ in range(2)]
+        for worker in self._workers:
+            worker.start()
 
     # ------------------------------------------------------------------ public
     def submit(self, job: Job, task) -> Job:
         with self._cv:
+            directory = job.destPath if job.kind in ("compress", "extract") else os.path.dirname(job.srcPath)
+            self._buckets[job.id] = os.path.realpath(job.bucket or directory)
             self.jobs[job.id] = job
             self.order.insert(0, job.id)
             self._q.append(job.id)
-            job._task = task  # noqa: SLF001 - internal payload
-            self._cv.notify()
+            job._task = task
+            self._cv.notify_all()
         return job
 
     def get(self, job_id: str) -> Job | None:
-        return self.jobs.get(job_id)
+        with self._cv:
+            return self.jobs.get(job_id)
 
     def list(self) -> list[dict]:
-        return [self.jobs[i].to_dict() for i in self.order if i in self.jobs]
+        with self._cv:
+            return [self.jobs[i].to_dict() for i in self.order if i in self.jobs]
+
+    def history_snapshot(self, limit=40):
+        with self._cv:
+            return list(self.history[:limit])
 
     def active_count(self) -> int:
-        return sum(1 for j in self.jobs.values() if j.status in ("queued", "running"))
+        return sum(j["status"] in ("queued", "running") for j in self.list())
 
     def cancel(self, job_id: str) -> bool:
-        job = self.jobs.get(job_id)
-        if not job:
+        with self._cv:
+            job = self.jobs.get(job_id)
+            if job and job.to_dict()["status"] in ("queued", "running"):
+                job.cancel.set()
+                job.update(phase="正在取消…")
+                self._cv.notify_all()
+                return True
             return False
-        if job.status in ("queued", "running"):
-            job.cancel.set()
-            job.update(phase="正在取消…")
-            return True
-        return False
 
     def remove(self, job_id: str) -> None:
-        job = self.jobs.get(job_id)
-        if not job:
-            return
-        if job.status in ("queued", "running"):
-            job.cancel.set()
-            return
-        self.jobs.pop(job_id, None)
-        if job_id in self.order:
-            self.order.remove(job_id)
+        with self._cv:
+            if self.cancel(job_id):
+                return
+            self.jobs.pop(job_id, None)
+            if job_id in self.order:
+                self.order.remove(job_id)
 
     def clear_finished(self) -> None:
-        for jid in list(self.order):
-            job = self.jobs.get(jid)
-            if job and job.status not in ("queued", "running"):
-                self.jobs.pop(jid, None)
-                self.order.remove(jid)
+        with self._cv:
+            for jid in list(self.order):
+                job = self.jobs.get(jid)
+                if job and job.to_dict()["status"] not in ("queued", "running"):
+                    self.jobs.pop(jid, None)
+                    self.order.remove(jid)
 
     # ------------------------------------------------------------------ worker
     def _loop(self):
         while True:
             with self._cv:
-                while not self._q:
+                while True:
+                    jid = next((i for i in self._q if self._buckets[i] not in self._busy), None)
+                    if jid is not None:
+                        break
                     self._cv.wait()
-                jid = self._q.pop(0)
-            job = self.jobs.get(jid)
-            if not job or job.cancel.is_set():
-                if job:
+                self._q.remove(jid)
+                job = self.jobs[jid]
+                bucket = self._buckets[jid]
+                if job.cancel.is_set():
                     job.update(status="cancelled", phase="已取消", finished=time.time())
-                continue
-            job.update(status="running", started=time.time(), phase="准备中")
+                    self._buckets.pop(jid)
+                    self._targets.pop(jid, None)
+                    self._cv.notify_all()
+                    continue
+                self._busy.add(bucket)
+                job.update(status="running", started=time.time(), phase="准备中")
             try:
                 job._task(job)  # noqa: SLF001
                 if job.cancel.is_set():
@@ -179,21 +200,25 @@ class JobManager:
                     job.update(status="error", phase="失败", error=msg,
                                finished=time.time())
             finally:
-                self._record(job)
+                try:
+                    self._record(job)
+                finally:
+                    with self._cv:
+                        self._busy.remove(bucket)
+                        self._buckets.pop(jid, None)
+                        self._targets.pop(jid, None)
+                        self._cv.notify_all()
 
     def _record(self, job: Job):
-        if job.status == "done":
-            item = {
-                "id": job.id, "kind": job.kind, "title": job.title,
-                "subtitle": job.subtitle, "finished": job.finished,
-                "outputs": job.outputs, "srcPath": job.srcPath,
-                "destPath": job.destPath, "format": job.format,
-                "sizeText": job.sizeText, "status": "done",
-                "result": job.result,
-            }
-            self.history.insert(0, item)
-            self.history = self.history[:40]
-            util.write_json(util.state_path("history.json"), self.history)
+        snapshot = job.to_dict()
+        if snapshot["status"] == "done":
+            item = {key: snapshot[key] for key in (
+                "id", "kind", "title", "subtitle", "finished", "outputs",
+                "srcPath", "destPath", "format", "sizeText", "status", "result")}
+            with self._cv:
+                self.history.insert(0, item)
+                self.history = self.history[:40]
+                util.write_json(util.state_path("history.json"), self.history)
             if not self.settings.get("suppressSound", False):
                 util.beep()
 
@@ -204,24 +229,28 @@ def make_compress_task(mgr: JobManager, opts: dict):
         inputs = [p for p in opts["inputs"] if os.path.exists(p)]
         if not inputs:
             raise eng.EngineError("没有可压缩的文件")
-        job.update(phase="正在统计…", total=0)
-        total = 0
-        for p in inputs:
-            if job.cancel.is_set():
-                raise RuntimeError("已取消")
-            if os.path.isdir(p):
-                for root, _dirs, files in os.walk(p):
-                    for f in files:
-                        try:
-                            total += os.path.getsize(os.path.join(root, f))
-                        except OSError:
-                            pass
-            else:
-                try:
-                    total += os.path.getsize(p)
-                except OSError:
-                    pass
-        job.update(total=total, done=0, phase="正在压缩")
+        job.update(phase="正在扫描", item="", total=0, done=0, percent=0,
+                   speed=0, eta=None)
+        last_count = 0
+        last_update = time.monotonic()
+
+        def scanned(count, size):
+            nonlocal last_count, last_update
+            now = time.monotonic()
+            if count - last_count >= 128 or now - last_update >= .2:
+                job.update(item=f"已扫描 {count} 个文件 · 约 {util.human_size(size)}",
+                           phase="正在扫描", total=0, percent=0)
+                last_count, last_update = count, now
+
+        try:
+            _, total = util.scan_inputs(inputs, on_progress=scanned, cancel=job.cancel)
+        except OSError:
+            total = 0
+        finally:
+            job.update(item="")
+        if job.cancel.is_set():
+            raise RuntimeError("已取消")
+        job.update(total=total, done=0, percent=0, phase="正在压缩")
         base = os.path.commonpath([os.path.dirname(os.path.abspath(p)) for p in inputs]) \
             if len(inputs) > 1 else os.path.dirname(os.path.abspath(inputs[0]))
         if base == "/":
@@ -251,7 +280,9 @@ def make_compress_task(mgr: JobManager, opts: dict):
             _cleanup_outputs(opts, job.started or job.created)
             raise RuntimeError("已取消")
         if code != 0 and code != 1:
-            raise eng.EngineError(eng.describe_error(log, code) or "压缩失败")
+            raise eng.EngineError(eng.describe_error(
+                log, code, format=opts["format"],
+                has_password=bool(opts.get("password"))) or "压缩失败")
 
         entry = mgr.engine.resolve(opts["output"])
         files = mgr.engine.parts(entry) or [entry]

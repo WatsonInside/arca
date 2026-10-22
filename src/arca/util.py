@@ -63,6 +63,52 @@ def human_size(n) -> str:
     return ("-" if neg else "") + out
 
 
+def scan_inputs(inputs, *, on_progress=None, cancel=None):
+    import stat
+
+    seen = set()
+    count = total = 0
+
+    def check_cancel():
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError("已取消")
+
+    def count_file(path):
+        nonlocal count, total
+        check_cancel()
+        info = os.stat(path, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError("Unknown input size")
+        key = (info.st_dev, info.st_ino)
+        if key not in seen:
+            seen.add(key)
+            count += 1
+            total += info.st_size
+            if on_progress is not None:
+                on_progress(count, total)
+        check_cancel()
+
+    def walk_error(error):
+        raise error
+
+    for path in inputs:
+        check_cancel()
+        info = os.stat(path, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            for root, dirs, files in os.walk(path, onerror=walk_error):
+                check_cancel()
+                for directory in dirs:
+                    check_cancel()
+                    if os.path.islink(os.path.join(root, directory)):
+                        raise OSError("Unknown input size")
+                for filename in files:
+                    count_file(os.path.join(root, filename))
+        else:
+            count_file(path)
+    check_cancel()
+    return count, total
+
+
 def parse_size(value, default=None):
     """Accept 10485760, '10m', '700 MB', '1.5g'. Returns bytes or default."""
     if value is None or value == "" or value is False:

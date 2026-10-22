@@ -19,6 +19,8 @@ Two deliberate constraints:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -158,8 +160,70 @@ def fetch_latest(timeout: float = 15.0) -> dict:
         if url not in urls:
             urls.append(url)
 
+    archive = "7z%s-mac.tar.xz" % mmnn
     return {"version": version, "released": released, "url": urls[0],
-            "urls": urls, "page": PAGE_URL, "history": HISTORY_URL}
+            "urls": urls, "archive": archive, "page": PAGE_URL,
+            "history": HISTORY_URL}
+
+
+def _checksum_urls(urls: list[str]) -> list[str]:
+    out = []
+    for url in urls:
+        candidate = url + ".sha256"
+        if candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def _checksum_from_text(text: bytes, filename: str) -> str | None:
+    target = os.path.basename(filename).lower()
+    for line in text.decode("utf-8", "replace").splitlines():
+        match = re.match(r"^\s*([0-9a-fA-F]{64})\s+(?:[*]\s*)?(.+?)\s*$", line)
+        if not match:
+            continue
+        name = os.path.basename(match.group(2).replace("\\", "/")).lower()
+        if name == target:
+            return match.group(1).lower()
+    return None
+
+
+def _official_checksum(urls: list[str], filename: str, timeout: float = 15.0,
+                       release_api: str | None = None) -> str:
+    for url in _checksum_urls(urls):
+        try:
+            digest = _checksum_from_text(_get(url, timeout), filename)
+        except UpdateError:
+            continue
+        if digest:
+            return digest
+    match = re.search(r"7z(\d{4})-", filename)
+    if release_api is None and match:
+        release_api = "https://api.github.com/repos/ip7z/7zip/releases/tags/%s.%s" % (
+            match.group(1)[:2], match.group(1)[2:])
+    if release_api:
+        try:
+            payload = json.loads(_get(release_api, timeout).decode("utf-8", "replace"))
+            for asset in payload.get("assets", []):
+                name = os.path.basename(asset.get("name", "").replace("\\", "/"))
+                if name.lower() == filename.lower():
+                    digest = str(asset.get("digest") or "")
+                    matched = re.fullmatch(r"sha256:([0-9a-f]{64})", digest, re.I)
+                    if matched:
+                        return matched.group(1).lower()
+        except (UpdateError, ValueError, TypeError, AttributeError):
+            pass
+    raise UpdateError("无法获取校验值")
+
+
+def verify_download(path: str, urls: list[str], filename: str,
+                    timeout: float = 15.0, release_api: str | None = None) -> None:
+    expected = _official_checksum(urls, filename, timeout, release_api=release_api)
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(CHUNK), b""):
+            digest.update(chunk)
+    if digest.hexdigest().lower() != expected.lower():
+        raise UpdateError("校验不符，已放弃安装")
 
 
 def fetch_history(timeout: float = 15.0) -> dict:
@@ -346,6 +410,7 @@ class Installer:
         self.url = url if isinstance(url, list) else [url]
         self.urls = list(self.url)
         self.version = version
+        self.archive_name = "7z%s-mac.tar.xz" % version.replace(".", "").zfill(4)
         self.lock = threading.Lock()
         self.state = {"phase": "idle", "percent": 0, "received": 0, "total": 0,
                       "message": "", "version": version, "error": "",
@@ -379,6 +444,8 @@ class Installer:
         archive = os.path.join(work, "7z-mac.tar.xz")
         try:
             self._download(archive)
+            self._set(phase="verify", message="正在校验下载文件…")
+            verify_download(archive, self.urls, self.archive_name, timeout=25)
             self._set(phase="unpack", percent=0, message="正在解包…")
             binary = self._unpack(archive, work)
             self._set(phase="verify", message="正在校验新引擎…")

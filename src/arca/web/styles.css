@@ -847,6 +847,15 @@ table.entries .dir { color: var(--accent); }
 .job.done .bar i { background: var(--ok); }
 .job.error .bar i { background: var(--err); width: 100% !important; }
 .job-actions { display: flex; gap: 2px; flex: none; }
+.history-group {
+  padding: 10px 16px 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--ink-2); text-transform: uppercase;
+}
+.history-item { color: var(--ink-2); }
+.history-item .job-ico { opacity: 0.78; }
+.history-item .job-top b { color: var(--ink-2); }
+.history-item .job-sub { color: var(--ink-3); }
 
 /* ----------------------------------------------------------------- empty state */
 .empty {

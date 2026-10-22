@@ -230,6 +230,80 @@ class Engine:
             raise EngineError("文件不存在：" + raw_path)
         if zst.is_zstd(entry):
             return self._inspect_zstd(entry, raw_path)
+        if not password and not self.parts(entry):
+            result = self._inspect_zip(entry, raw_path)
+            if result is not None:
+                return result
+        return self._inspect_7zz(entry, raw_path, password)
+
+    def _inspect_zip(self, entry: str, raw_path: str):
+        import struct
+        import zipfile
+
+        methods = {0: "Store", 8: "Deflate", 12: "BZip2"}
+        try:
+            with open(entry, "rb") as source:
+                end = zipfile._EndRecData(source)
+                if (not end or end[1] or end[2] or end[3] != end[4]
+                        or end[9] + 22 + len(end[8]) != os.path.getsize(entry)
+                        or end[6] + end[5] != end[9]):
+                    return None
+                source.seek(0)
+                if source.read(4) not in (b"PK\x03\x04", b"PK\x05\x06"):
+                    return None
+            with zipfile.ZipFile(entry) as archive:
+                infos = archive.infolist()
+                decoded = []
+                for zi in infos:
+                    archive.fp.seek(zi.header_offset)
+                    local = archive.fp.read(30)
+                    if len(local) != 30 or local[:4] != b"PK\x03\x04":
+                        return None
+                    local_name, local_extra = struct.unpack_from("<HH", local, 26)
+                    if local_extra:
+                        return None
+                    if zi.header_offset + 30 + local_name + zi.compress_size > end[6]:
+                        return None
+                    if (zi.volume or zi.flag_bits & ~0x808
+                            or zi.compress_type not in methods
+                            or zi.external_attr & 0x10 and not zi.is_dir()):
+                        return None
+                    offset = 0
+                    while offset < len(zi.extra):
+                        tag, size = struct.unpack_from("<HH", zi.extra, offset)
+                        if tag != 1 or offset + 4 + size > len(zi.extra):
+                            return None
+                        offset += 4 + size
+                    name, encoding = zipfix._decode_with(zi)
+                    if name is None or "\\" in name or "\x00" in name:
+                        return None
+                    decoded.append((name, encoding))
+                fixed = any(name != zi.filename for zi, (name, _) in zip(infos, decoded))
+                if fixed and not any(not zi.flag_bits & 0x800 and not zi.filename.isascii()
+                                     for zi in infos[:400]):
+                    return None
+                if not fixed and any(not 1 <= zi.date_time[1] <= 12
+                                     or not 1 <= zi.date_time[2] <= 31 for zi in infos):
+                    return None
+                name_encoding = next((enc for zi, (name, enc) in zip(infos, decoded)
+                                      if name != zi.filename), "utf-8") if fixed else "utf-8"
+                entries = []
+                for zi, (name, _) in zip(infos, decoded):
+                    is_dir = zi.is_dir()
+                    entries.append({
+                        "path": name if fixed else name.rstrip("/") if is_dir else name,
+                        "size": zi.file_size, "packed": zi.compress_size,
+                        "modified": "%04d-%02d-%02d %02d:%02d:%02d" % zi.date_time,
+                        "isDir": is_dir, "encrypted": False,
+                        "crc": "" if fixed or is_dir and not zi.CRC else "%08X" % zi.CRC,
+                        "method": "" if fixed else methods[zi.compress_type],
+                    })
+            return self._inspect_result(entry, raw_path, {"Type": "zip"}, entries,
+                                        False, "", name_encoding)
+        except (OSError, ValueError, UnicodeError, struct.error, zipfile.BadZipFile):
+            return None
+
+    def _inspect_7zz(self, entry: str, raw_path: str, password: str = "") -> dict:
         # No `-ba`: bare mode also hides the archive header block, which is the
         # only thing a *valid empty* archive prints.  Entry blocks are still
         # parsed the same way, and the header gives us Type/Solid/Method that
@@ -258,8 +332,6 @@ class Engine:
             raise EngineError(_hint(out) or "无法读取该压缩包")
 
         ftype = (meta.get("Type") or "").strip()
-        label = _type_label(ftype, entry)
-        parts = self.parts(entry)
         # 7-Zip's macOS build cannot map the OEM code page used by Windows ZIPs,
         # so every high byte lands in the private-use area (U+EFD6 …).  Detect it
         # and re-read the names from the central directory instead.
@@ -271,6 +343,14 @@ class Engine:
             if plan:
                 entries = plan["entries"]
                 name_encoding = plan["encoding"]
+        return self._inspect_result(entry, raw_path, meta, entries, needs_password,
+                                    password, name_encoding)
+
+    def _inspect_result(self, entry, raw_path, meta, entries, needs_password,
+                        password, name_encoding):
+        ftype = (meta.get("Type") or "").strip()
+        label = _type_label(ftype, entry)
+        parts = self.parts(entry)
         total_u = sum(e["size"] for e in entries if not e["isDir"])
         files = sum(1 for e in entries if not e["isDir"])
         dirs = sum(1 for e in entries if e["isDir"])
@@ -572,9 +652,16 @@ def _hint(log: str) -> str:
     return ""
 
 
-def describe_error(log: str, code: int, cancelled: bool = False) -> str:
+ZIP_PASSWORD_HINT = ("ZIP 格式暂不支持含中文等非 ASCII 字符的密码，"
+                     "请改用 7z 格式（同时会加密文件名，更安全）")
+
+
+def describe_error(log: str, code: int, cancelled: bool = False, *,
+                   format: str = "", has_password: bool = False) -> str:
     if cancelled:
         return "已取消"
+    if code != 0 and format == "zip" and has_password and "E_INVALIDARG" in (log or "").upper():
+        return ZIP_PASSWORD_HINT
     hint = _hint(log)
     if hint:
         return hint

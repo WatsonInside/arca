@@ -356,12 +356,22 @@ class InstallJob:
         spec["version"] = self.version
         work = os.path.join(bin_dir(), ".build-%s-%s" % (self.comp.id, self.version))
         os.makedirs(work, exist_ok=True)
-        url = spec["source"].format(version=self.version)
-        archive = os.path.join(work, os.path.basename(url) + ".tar.gz")
+        tag = spec["tag"].format(version=self.version)
+        filename = spec["archive"].format(version=self.version)
+        url = f"https://github.com/{spec['repo']}/releases/download/{tag}/{filename}"
+        archive = os.path.join(work, filename)
+        try:
+            self._set(phase="download", percent=0.0, message="正在下载源码…")
+            self._download(url, archive)
+            self._set(phase="verify", percent=0.0, message="正在校验下载文件…")
+            updates.verify_download(
+                archive, [url], filename, timeout=25,
+                release_api=f"https://api.github.com/repos/{spec['repo']}/releases/tags/{tag}")
+            self._build_source(spec, work, archive)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
-        self._set(phase="download", percent=0.0, message="正在下载源码…")
-        self._download(url, archive)
-
+    def _build_source(self, spec: dict, work: str, archive: str):
         self._set(phase="unpack", percent=0.0, message="正在解包…")
         src = os.path.join(work, "src")
         shutil.rmtree(src, ignore_errors=True)
@@ -485,7 +495,9 @@ PAR2_CONFIG_H = """#define STDC_HEADERS 1
 
 SOURCE_RECIPES = {
     "zstd": {
-        "source": "https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v{version}",
+        "repo": "facebook/zstd",
+        "tag": "v{version}",
+        "archive": "zstd-{version}.tar.gz",
         "compiler": "cc",
         "flags": ["-O2", "-DNDEBUG", "-DXXH_NAMESPACE=ZSTD_", "-DZSTD_MULTITHREAD",
                   "-DZSTD_DISABLE_ASM"],
@@ -503,7 +515,9 @@ SOURCE_RECIPES = {
         "version_re": r"v([0-9]+\.[0-9]+\.[0-9]+)",
     },
     "par2": {
-        "source": "https://codeload.github.com/Parchive/par2cmdline/tar.gz/refs/tags/v{version}",
+        "repo": "Parchive/par2cmdline",
+        "tag": "v{version}",
+        "archive": "par2cmdline-{version}.tar.gz",
         "compiler": "c++",
         "flags": ["-O2", "-w", "-std=c++17", "-DHAVE_CONFIG_H"],
         "sources": ["src/*.cpp"],

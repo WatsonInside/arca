@@ -362,7 +362,8 @@
               </table>
             </div>
             <div class="card-foot" id="x-table-foot">
-              <span class="opt-hint" id="x-more"></span>
+              <span class="opt-hint" id="x-more" role="status" aria-live="polite"></span>
+              <button class="btn quiet hidden" id="x-show-all" aria-controls="x-table">显示全部</button>
               <span class="spacer" style="flex:1"></span>
               <span class="opt-hint" id="x-ratio"></span>
             </div>
@@ -381,6 +382,11 @@
                     </div>
                   </div>
                   <button class="btn ghost" id="x-verify">验证</button>
+                  <div class="switch">
+                    <button class="toggle" id="x-remember" role="checkbox" aria-checked="false" aria-label="记住此密码"></button>
+                    <label for="x-remember">记住此密码</label>
+                  </div>
+                  <span class="opt-hint" id="x-pw-status" role="status" aria-live="polite"></span>
                 </div>
               </div>
               <div class="opt-row">

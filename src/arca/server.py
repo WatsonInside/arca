@@ -16,9 +16,11 @@ from . import engine as eng
 from . import components
 from . import integration
 from . import par2 as par2_mod
+from . import appupdate
 from . import updates
 from . import jobs as jobs_mod
 from . import util
+from . import keyring
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -58,12 +60,15 @@ class AppContext:
         self.settings = settings
         self.web_dir = web_dir
         self.manager = jobs_mod.JobManager(engine, settings)
+        self.saved_passwords = keyring.SavedPasswords()
         self.token = util.app_support_dir() and _token()
         self.window = None
         self.bridge = None
         self.inspect_cache: dict[str, dict] = {}
+        self.inspect_lock = threading.RLock()
         self.installer = None          # updates.Installer while one is running
         self.component_jobs: dict[str, object] = {}
+        self.app_updater = appupdate.Updater(settings)
         # Requests that arrive from outside the window (Finder service, "open
         # with", double click) wait here until the page is ready to take them.
         self.inbox: list[dict] = []
@@ -116,7 +121,17 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _json(self, obj, code: int = 200):
+        obj = keyring.redact(obj, getattr(self, "_secrets", ()))
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def _password(self, body, entry):
+        password = body.get("password") or ""
+        if not isinstance(password, str):
+            raise eng.EngineError("密码格式无效")
+        saved = not password
+        password = password or keyring.lookup(entry, auth=self.ctx.settings.get("passwordAuth", "off")) or ""
+        self._secrets = [password] if password else []
+        return password, saved and bool(password)
 
     def _err(self, message: str, code: int = 400):
         self._json({"ok": False, "error": message}, code)
@@ -205,15 +220,18 @@ class Handler(BaseHTTPRequestHandler):
                 "desktop": os.path.join(home, "Desktop"),
                 "downloads": os.path.join(home, "Downloads"),
                 "settings": ctx.settings.all(),
-                "history": ctx.manager.history[:20],
+                "history": ctx.manager.history_snapshot(20),
             })
         if path == "/api/jobs":
             return self._json({"ok": True, "jobs": ctx.manager.list(),
                                "active": ctx.manager.active_count()})
         if path == "/api/settings":
-            return self._json({"ok": True, "settings": ctx.settings.all()})
+            return self._json({"ok": True, "settings": ctx.settings.all(),
+                                   "savedPasswords": ctx.saved_passwords.summary()})
         if path == "/api/history":
-            return self._json({"ok": True, "history": ctx.manager.history[:40]})
+            return self._json({"ok": True, "history": ctx.manager.history_snapshot()})
+        if path == "/api/appupdate":
+            return self._json({"ok": True, "update": ctx.app_updater.check(force=bool(query.get("refresh")))})
         if path == "/api/engine/update":
             return self._engine_update(query)
         if path == "/api/components":
@@ -236,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_post(self, path: str, body: dict):
         ctx = self.ctx
+        self._secrets = [body["password"]] if isinstance(body.get("password"), str) and body["password"] else []
         try:
             if path == "/api/inspect":
                 return self._inspect(body)
@@ -248,11 +267,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/preflight":
                 return self._preflight(body)
             if path == "/api/settings":
+                if body.get("clearSavedPasswords") is True:
+                    if not ctx.saved_passwords.clear_all():
+                        return self._err("部分密码未能清除，请检查钥匙串后重试")
                 ctx.settings.patch(body.get("patch") or body)
                 if body.get("patch", {}).get("rarPath") is not None or "rarPath" in body:
                     ctx.engine.rar = ctx.engine._find_rar(  # noqa: SLF001
                         ctx.settings.get("rarPath") or None)
-                return self._json({"ok": True, "settings": ctx.settings.all()})
+                return self._json({"ok": True, "settings": ctx.settings.all(),
+                                   "savedPasswords": ctx.saved_passwords.summary()})
+            if path == "/api/appupdate/apply":
+                return self._json({"ok": True, "install": ctx.app_updater.apply(body.get("version"))})
+            if path == "/api/appupdate/dismiss":
+                ctx.app_updater.dismiss(body.get("version"))
+                return self._json({"ok": True})
             if path == "/api/engine/update/apply":
                 return self._engine_apply(body)
             if path == "/api/engine/update/snooze":
@@ -456,18 +484,43 @@ class Handler(BaseHTTPRequestHandler):
 
     def _inspect(self, body):
         path = (body.get("path") or "").strip()
-        password = body.get("password") or ""
         if not path:
             return self._err("缺少文件路径")
-        info = self.ctx.engine.inspect(path, password)
-        self.ctx.inspect_cache[info["path"]] = {
-            "uncompressed": info["uncompressed"], "size": info["size"],
-            "ts": time.time(),
-        }
+        password, saved = self._password(body, self.ctx.engine.resolve(path))
+        info = self._inspect_archive(path, password)
+        info["savedPasswordUsed"] = saved
         # Recovery records live next to the archive, so the UI cannot guess them:
         # a single stat of the directory is cheaper than a separate request.
         info["par2Files"] = len(par2_mod.recovery_files(info["path"]))
         return self._json({"ok": True, "info": info})
+
+    @staticmethod
+    def _archive_stat(path):
+        try:
+            info = os.stat(path)
+            return info.st_mtime_ns, info.st_size
+        except OSError:
+            return None
+
+    def _inspect_archive(self, path, password):
+        with self.ctx.inspect_lock:
+            return self._inspect_archive_locked(path, password)
+
+    def _inspect_archive_locked(self, path, password):
+        entry = self.ctx.engine.resolve(path)
+        before = self._archive_stat(entry)
+        self.ctx.inspect_cache.pop(entry, None)
+        info = self.ctx.engine.inspect(path, password)
+        if before is not None and info["path"] == entry and before == self._archive_stat(entry):
+            self.ctx.inspect_cache[entry] = {
+                "uncompressed": info["uncompressed"], "size": info["size"],
+                "type": info["type"], "label": info["label"],
+                "needsPassword": info.get("needsPassword", False),
+                "stat": before, "ts": time.time(),
+            }
+            while len(self.ctx.inspect_cache) > 64:
+                self.ctx.inspect_cache.pop(next(iter(self.ctx.inspect_cache)))
+        return info
 
     def _preflight(self, body):
         dest = body.get("destDir") or ""
@@ -479,11 +532,24 @@ class Handler(BaseHTTPRequestHandler):
         if not dest or not os.path.isdir(dest):
             return self._err("保存位置无效")
         target = os.path.join(dest, name)
-        exists = os.path.exists(target) or bool(
-            self.ctx.engine.parts(self.ctx.engine.resolve(target)))
-        suggestion = util.unique_path(target) if exists else target
+        with self.ctx.manager._cv:
+            exists = self._target_exists(target, archive=True)
+            suggestion = self._unique_target(target, archive=True)
         return self._json({"ok": True, "target": target, "exists": exists,
                            "suggestion": suggestion})
+
+    def _target_exists(self, path, archive=False):
+        return (os.path.realpath(path) in self.ctx.manager._targets.values()
+                or os.path.exists(path)
+                or bool(archive and self.ctx.engine.parts(self.ctx.engine.resolve(path))))
+
+    def _unique_target(self, path, archive=False):
+        root, ext = os.path.splitext(path)
+        candidate, index = path, 2
+        while self._target_exists(candidate, archive):
+            candidate = f"{root} {index}{ext}"
+            index += 1
+        return candidate
 
     def _compress(self, body):
         inputs = [os.path.expanduser(p) for p in (body.get("inputs") or []) if p]
@@ -499,18 +565,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._err("创建 RAR 需要安装 WinRAR 命令行（rar）")
         if fmt == "tar.zst" and not self.ctx.engine.zstd:
             return self._err("创建 ZST 需要 zstd 组件（设置 → 组件）")
+        if fmt == "zip" and not (body.get("password") or "").isascii():
+            return self._err(eng.ZIP_PASSWORD_HINT)
         dest_dir = body.get("destDir") or os.path.dirname(os.path.abspath(inputs[0]))
         if not os.path.isdir(dest_dir):
             return self._err("保存位置不存在")
+        try:
+            _, need = util.scan_inputs(inputs)
+            free = shutil.disk_usage(dest_dir).free
+        except OSError:
+            pass
+        else:
+            if free < need + 64 * 1024 * 1024:
+                return self._err("磁盘剩余空间不足：还需要约 %s，可用 %s"
+                                 % (util.human_size(need), util.human_size(free)))
         name = util.sanitize_name(body.get("name") or _default_name(inputs))
         ext = _ext_for(fmt)
         if name.lower().endswith(ext):
             name = name[: -len(ext)]
         target = os.path.join(dest_dir, name + ext)
-        if body.get("overwrite"):
-            _remove_target(target, self.ctx.engine)
-        elif os.path.exists(target) or self.ctx.engine.parts(self.ctx.engine.resolve(target)):
-            target = util.unique_path(target)
         par2_percent = int(body.get("par2Percent") or 0)
         if par2_percent and not self.ctx.engine.par2:
             return self._err("生成恢复记录需要 PAR2 组件（设置 → 组件）")
@@ -537,10 +610,23 @@ class Handler(BaseHTTPRequestHandler):
         pw = opts["password"]
         if pw and fmt == "zip" and opts["encryptNames"]:
             opts["encryptNames"] = False
-        label = "压缩 " + os.path.basename(target)
-        job = jobs_mod.Job("compress", label, subtitle=_join_inputs(inputs),
-                           destPath=dest_dir, format=fmt.upper(), inputs=inputs)
-        self.ctx.manager.submit(job, jobs_mod.make_compress_task(self.ctx.manager, opts))
+        with self.ctx.manager._cv:
+            overwrite = bool(body.get("overwrite"))
+            if not overwrite:
+                target = self._unique_target(target, archive=True)
+            opts["output"] = target
+            label = "压缩 " + os.path.basename(target)
+            job = jobs_mod.Job("compress", label, subtitle=_join_inputs(inputs),
+                               destPath=dest_dir, format=fmt.upper(), inputs=inputs,
+                               secrets=[pw])
+            task = jobs_mod.make_compress_task(self.ctx.manager, opts)
+            engine = self.ctx.engine
+            def prepared(job):
+                if overwrite and not job.cancel.is_set():
+                    _remove_target(target, engine)
+                task(job)
+            self.ctx.manager._targets[job.id] = os.path.realpath(target)
+            self.ctx.manager.submit(job, prepared)
         return self._json({"ok": True, "job": job.to_dict(), "target": target,
                            "encrypted": bool(pw),
                            "par2": opts["par2Percent"],
@@ -553,34 +639,23 @@ class Handler(BaseHTTPRequestHandler):
         entry = self.ctx.engine.resolve(path)
         if not os.path.exists(entry):
             return self._err("文件不存在")
-        info = body.get("info") or {}
+        password, saved = self._password(body, entry)
+        with self.ctx.inspect_lock:
+            cached = self.ctx.inspect_cache.pop(entry, None)
+            current = self._archive_stat(entry)
+            if (cached is not None and current is not None
+                    and cached.get("stat") == current and not cached.get("needsPassword")):
+                self.ctx.inspect_cache[entry] = cached
+                info = cached
+            else:
+                info = self._inspect_archive_locked(entry, password)
         total = int(info.get("uncompressed") or 0)
-        cached = self.ctx.inspect_cache.get(entry)
-        if not total and cached:
-            total = int(cached.get("uncompressed") or 0)
         dest_root = body.get("destDir") or os.path.dirname(entry)
         if not os.path.isdir(dest_root):
             try:
                 os.makedirs(dest_root, exist_ok=True)
             except OSError:
                 return self._err("目标位置不存在或不可写")
-        if body.get("autoFolder", True):
-            stem = _archive_stem(entry)
-            dest = os.path.join(dest_root, stem)
-            if os.path.exists(dest):
-                on_exists = str(body.get("onExists") or "")
-                if on_exists == "rename":
-                    dest = util.unique_path(dest)
-                elif on_exists != "merge":
-                    # Silent "包 2" folders are how people end up with three
-                    # copies and no idea which one is current.
-                    return self._json({
-                        "ok": False, "code": "exists", "dest": dest,
-                        "suggestion": util.unique_path(dest),
-                        "error": "已存在同名文件夹",
-                    }, 409)
-        else:
-            dest = dest_root
         need = int(total or 0)
         if need > 0:
             try:
@@ -590,31 +665,57 @@ class Handler(BaseHTTPRequestHandler):
             if free and free < need + 64 * 1024 * 1024:
                 return self._err("磁盘剩余空间不足：还需要约 %s，可用 %s"
                                  % (util.human_size(need), util.human_size(free)))
-        opts = {
-            "archive": entry,
-            "dest": dest,
-            "password": body.get("password") or "",
-            "overwrite": body.get("overwrite") or self.ctx.settings.get("overwrite"),
-            "format": info.get("type") or "",
-            "totalBytes": total,
-        }
-        label = "解压 " + os.path.basename(entry)
-        job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
-                           srcPath=entry, destPath=dest,
-                           total=total, format=(info.get("label") or ""))
-        self.ctx.manager.submit(job, jobs_mod.make_extract_task(self.ctx.manager, opts))
-        return self._json({"ok": True, "job": job.to_dict(), "dest": dest})
+        with self.ctx.manager._cv:
+            if body.get("autoFolder", True):
+                stem = _archive_stem(entry)
+                dest = os.path.join(dest_root, stem)
+                if self._target_exists(dest):
+                    on_exists = str(body.get("onExists") or "")
+                    if on_exists == "rename":
+                        dest = self._unique_target(dest)
+                    elif on_exists != "merge":
+                        return self._json({
+                            "ok": False, "code": "exists", "dest": dest,
+                            "suggestion": self._unique_target(dest),
+                            "error": "已存在同名文件夹",
+                        }, 409)
+            else:
+                dest = dest_root
+            opts = {
+                "archive": entry,
+                "dest": dest,
+                "password": password,
+                "overwrite": body.get("overwrite") or self.ctx.settings.get("overwrite"),
+                "format": info.get("type") or "",
+                "totalBytes": total,
+            }
+            label = "解压 " + os.path.basename(entry)
+            job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
+                               srcPath=entry, destPath=dest, secrets=[password], bucket=dest_root,
+                               total=total, format=(info.get("label") or ""))
+            remembered = (self.ctx.saved_passwords.remember(
+                entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
+                          if body.get("remember") is True else False)
+            self.ctx.manager._targets[job.id] = os.path.realpath(dest)
+            self.ctx.manager.submit(job, jobs_mod.make_extract_task(self.ctx.manager, opts))
+        return self._json({"ok": True, "job": job.to_dict(), "dest": dest,
+                           "savedPasswordUsed": saved, "passwordRemembered": remembered})
 
     def _test(self, body):
         path = body.get("path") or ""
         if not path:
             return self._err("请选择压缩包")
         entry = self.ctx.engine.resolve(path)
-        job = jobs_mod.Job("test", "校验 " + os.path.basename(entry),
+        password, saved = self._password(body, entry)
+        job = jobs_mod.Job("test", "校验 " + os.path.basename(entry), secrets=[password],
                            srcPath=entry, format=(body.get("info") or {}).get("label", ""))
+        remembered = (self.ctx.saved_passwords.remember(
+            entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
+                      if body.get("remember") is True else False)
         self.ctx.manager.submit(
-            job, jobs_mod.make_test_task(self.ctx.manager, entry, body.get("password") or ""))
-        return self._json({"ok": True, "job": job.to_dict()})
+            job, jobs_mod.make_test_task(self.ctx.manager, entry, password))
+        return self._json({"ok": True, "job": job.to_dict(),
+                           "savedPasswordUsed": saved, "passwordRemembered": remembered})
 
 
 # ----------------------------------------------------------------- small helpers
@@ -664,6 +765,17 @@ class Server:
 
     def start(self):
         self.thread.start()
+        updater = getattr(self.httpd.RequestHandlerClass.ctx, "app_updater", None)
+        if updater is not None and updater.marker.exists():
+            import urllib.request
+            try:
+                request = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/settings", headers={
+                    "X-Arca-Token": self.httpd.RequestHandlerClass.ctx.token})
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    ready = response.status == 200
+                updater.startup(ready=ready)
+            except Exception:
+                updater.startup(ready=False)
 
     def stop(self):
         try:
