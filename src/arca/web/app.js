@@ -752,10 +752,12 @@ function patchJobEl(el, job) {
   el.className = `job ${job.status}`;
   const pct = job.status === 'done' ? 100 : job.percent;
   const pctText = job.status === 'running' ? Math.round(pct) + '%'
-    : job.status === 'done' ? '完成'
+    : job.status === 'done' ? '已完成'
       : job.status === 'error' ? '失败' : '已取消';
   setText(el.querySelector('.job-top b'), job.title);
-  setText(el.querySelector('.pct'), pctText);
+  // Percentage belongs beside the title; a final state belongs with the action
+  // buttons so the label and the icon share one vertical centre.
+  setText(el.querySelector('.job-top .pct'), job.status === 'running' ? pctText : '');
 
   const ico = el.querySelector('.job-ico');
   const iconId = KIND_ICON[job.kind] || 'i-box';
@@ -779,7 +781,8 @@ function patchJobEl(el, job) {
   bar.setAttribute('aria-label', job.title);
 
   const box = el.querySelector('.job-actions');
-  const sig = jobActions(job).join('');
+  const statusHtml = job.status === 'running' ? '' : `<span class="pct">${esc(pctText)}</span>`;
+  const sig = statusHtml + jobActions(job).join('');
   if (box.dataset.sig !== sig) {
     box.innerHTML = sig;
     box.dataset.sig = sig;
@@ -791,7 +794,7 @@ function historyPath(item) {
 }
 
 function historyLabel(item) {
-  return item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : '已取消';
+  return item.status === 'done' ? '已完成' : item.status === 'error' ? '失败' : '已取消';
 }
 
 function renderHistory(list) {
@@ -799,15 +802,18 @@ function renderHistory(list) {
   const sig = history.map((item) => `${item.id}:${item.status}:${item.finished || ''}`).join('|');
   if (list.dataset.historySig === sig) return;
   list.dataset.historySig = sig;
-  list.innerHTML = history.length ? `<div class="history-group">历史</div>${history.map((item) => {
+  list.innerHTML = history.length ? `${history.map((item) => {
     const path = historyPath(item);
-    const result = item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷` : item.sizeText || historyLabel(item);
+    // The right-hand column already says 已完成/失败/已取消, so the subtitle must
+    // not repeat it: fall back to the archive type instead.
+    const result = item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷`
+      : item.sizeText || item.format || '—';
     const reveal = path ? `<button class="icon-btn" data-reveal="${esc(path)}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>` : '';
     return `<div class="job history-item" data-history="${esc(item.id)}">
       <div class="job-ico ${esc(item.status || 'done')}">${icon(KIND_ICON[item.kind] || 'i-box')}</div>
-      <div class="job-main"><div class="job-top"><b>${esc(item.title || '历史任务')}</b><span class="pct">${esc(historyLabel(item))}</span></div>
+      <div class="job-main"><div class="job-top"><b>${esc(item.title || '历史任务')}</b></div>
       <div class="job-sub">${esc(fmtDate(item.finished))}<span class="sep">·</span>${esc(result)}</div></div>
-      <div class="job-actions">${reveal}</div>
+      <div class="job-actions"><span class="pct">${esc(historyLabel(item))}</span>${reveal}</div>
     </div>`;
   }).join('')}` : '';
 }
@@ -819,6 +825,13 @@ function renderQueue() {
   $('#q-empty').classList.toggle('hidden', jobs.length > 0 || showHistory);
   $('#q-meta').textContent = jobs.length ? `${jobs.length} 项` : showHistory ? `${Math.min(state.history.length, 20)} 条历史` : '';
   const active = jobs.filter((j) => j.status === 'running').length;
+  // The panel title has to match what is actually listed: "进行中与最近" read
+  // wrong once the list was pure history.
+  $('#q-title').textContent = active ? '进行中'
+    : (jobs.length || state.history.length) ? '最近任务' : '任务';
+  // Clearing also drops persisted history, so name the action after the rows on
+  // screen.
+  $('#q-clear').textContent = (!jobs.length && state.history.length) ? '清除历史' : '清理已完成';
   $('#nav-count').classList.toggle('hidden', active === 0);
   $('#nav-count').textContent = String(active);
 
@@ -1530,10 +1543,13 @@ function menuJob(job) {
 
 function menuQueueBlank() {
   const finished = state.jobs.filter((j) => j.status !== 'running' && j.status !== 'queued').length;
+  // The endpoint clears the persisted history too, so count it — otherwise the
+  // entry reads "disabled" while the list still shows history rows.
+  const records = finished + (state.jobs.length ? 0 : state.history.length);
   return [
     { label: '刷新任务列表', icon: 'i-refresh', action: refreshJobsNow },
-    { label: finished ? `清理已完成（${finished}）` : '清理已完成', icon: 'i-trash',
-      disabled: !finished,
+    { label: records ? `清理已完成（${records}）` : '清理已完成', icon: 'i-trash',
+      disabled: !records,
       action: async () => { await api('/jobs/clear', {}); refreshJobsNow(); } },
     { sep: true },
     { label: '压缩文件', icon: 'i-compress', action: () => setView('compress') },

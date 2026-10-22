@@ -162,6 +162,13 @@ class JobManager:
                 if job and job.to_dict()["status"] not in ("queued", "running"):
                     self.jobs.pop(jid, None)
                     self.order.remove(jid)
+            # The panel shows finished jobs and, when none are left, the persisted
+            # history.  Clearing only the in-memory list left that history behind,
+            # so the button appeared to do nothing.
+            had_history = bool(self.history)
+            self.history = []
+        if had_history:
+            util.write_json(util.state_path("history.json"), [])
 
     # ------------------------------------------------------------------ worker
     def _loop(self):
