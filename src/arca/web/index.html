@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arca</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.2 3.6 7.6 12 12l8.4-4.4L12 3.2Z"/><path d="M3.6 12 12 16.4 20.4 12"/><path d="M3.6 16.4 12 20.8l8.4-4.4"/>
+  </symbol>
+  <!-- 压缩 / 解压：共享同一个箱体，只有箭头方向相反。同族图标靠方向区分，
+       比"层叠 vs 下载托盘"更容易一眼配对；箱口留缺口，箭头从中穿过。 -->
+  <!-- 压缩 / 解压共用「带盖的箱子」：箱盖 + 箱体固定不动，只有上方箭头方向相反。
+       刻意不用"浅托盘 + 向上箭头"那种构图 —— 那正好是 macOS 的「分享」图标。 -->
+  <!-- 压缩 / 解压共用「带盖的箱子」：箱盖 + 箱体固定不动，只有上方箭头方向相反。
+       刻意不用"浅托盘 + 向上箭头"那种构图 —— 那正好是 macOS 的「分享」图标。
+       箱体压低到 12.4 以下，给箭头留出 6.6 单位，16px 下箭头仍有约 4.4px。 -->
+  <symbol id="i-compress" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.4" y="9.4" width="17.2" height="3.2" rx="1.1"/>
+    <path d="M5 12.4v4.6A2.4 2.4 0 0 0 7.4 19.4h9.2a2.4 2.4 0 0 0 2.4-2.4v-4.6"/>
+    <path d="M12 2.2v6.6"/><path d="m9.4 6.2 2.6 2.6 2.6-2.6"/>
+  </symbol>
+  <symbol id="i-extract" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.4" y="9.4" width="17.2" height="3.2" rx="1.1"/>
+    <path d="M5 12.4v4.6A2.4 2.4 0 0 0 7.4 19.4h9.2a2.4 2.4 0 0 0 2.4-2.4v-4.6"/>
+    <path d="M12 8.8V2.2"/><path d="m9.4 4.8 2.6-2.6 2.6 2.6"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8.5 5.9h11M8.5 12h11M8.5 18.1h11"/><circle cx="4.6" cy="5.9" r="1.15"/><circle cx="4.6" cy="12" r="1.15"/><circle cx="4.6" cy="18.1" r="1.15"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(12 12) scale(0.9) translate(-12 -12)"><circle cx="12" cy="12" r="3.2"/>
+    <path d="M19.4 14.6a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-2.87-1.2l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0-1.2-2.87H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.2-2.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 2.87-1.2V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 2.87 1.2l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0 1.2 2.87H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49 1.59Z"/></g>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M5 5l14 14M19 5 5 19"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l1.7 2h8.1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z"/>
+  </symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9l-5.5-5.5Z"/><path d="M13.5 3.5V9H19"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="10.5" width="14" height="10" rx="2.4"/><path d="M8.6 10.5V7.8a3.4 3.4 0 0 1 6.8 0v2.7"/>
+  </symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2.5 12s3.6-6.5 9.5-6.5S21.5 12 21.5 12 17.9 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/>
+  </symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 4.5 20 20"/><path d="M9.7 6.1A9.6 9.6 0 0 1 12 5.8c5.9 0 9.5 6.2 9.5 6.2a17 17 0 0 1-2.9 3.5"/><path d="M6.3 8.1A16.9 16.9 0 0 0 2.5 12s3.6 6.2 9.5 6.2a9.4 9.4 0 0 0 3.5-.66"/><path d="M9.9 10.2a2.9 2.9 0 0 0 4 4"/>
+  </symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9.5 6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5 9.5 17 4 11.5"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/><path d="m8.2 12.2 2.6 2.6 5-5.4"/>
+  </symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/><path d="M12 7.6v5.2"/><circle cx="12" cy="16.4" r="0.9" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/><path d="M12 11v5.4"/><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-dice" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="4" width="16" height="16" rx="3.4"/><circle cx="9" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-reveal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4 4"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.5 7h15"/><path d="M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7"/><path d="M6.6 7l.7 11.2A2 2 0 0 0 9.3 20h5.4a2 2 0 0 0 2-1.8L17.4 7"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
+    <circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2.1M12 19.1v2.1M4.5 4.5l1.5 1.5M18 18l1.5 1.5M2.8 12h2.1M19.1 12h2.1M4.5 19.5 6 18M18 6l1.5-1.5"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 14.2A8.2 8.2 0 0 1 9.8 4 8.4 8.4 0 1 0 20 14.2Z"/>
+  </symbol>
+  <symbol id="i-zip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4.5" y="3.2" width="15" height="17.6" rx="3.2"/><path d="M12 7.2v1.6M12 11v1.6M12 14.8v1.6"/><circle cx="12" cy="18.4" r="1.1"/>
+  </symbol>
+  <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.6 8.1 12 4l8.4 4.1v7.8L12 20l-8.4-4.1V8.1Z"/><path d="m3.6 8.1 8.4 4.1 8.4-4.1"/><path d="M12 12.2V20"/>
+  </symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3.5"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="8.6" y="8.6" width="10.6" height="11.6" rx="2.2"/>
+    <path d="M15.4 8.6V6.8a2.2 2.2 0 0 0-2.2-2.2H6.8a2.2 2.2 0 0 0-2.2 2.2v9.4a2.2 2.2 0 0 0 2.2 2.2h1.8"/>
+  </symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 4.6H7.2A2.2 2.2 0 0 0 5 6.8v11.4a2.2 2.2 0 0 0 2.2 2.2h9.6a2.2 2.2 0 0 0 2.2-2.2V6.8a2.2 2.2 0 0 0-2.2-2.2H15"/>
+    <rect x="9" y="2.9" width="6" height="3.5" rx="1.3"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.5v10"/><path d="m7.6 9.4 4.4 4.4 4.4-4.4"/><path d="M4.5 16.5V18a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-1.5"/>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.2 12a8.2 8.2 0 1 1-2.7-6.1"/><path d="M20.3 3.9v4.3h-4.3"/>
+  </symbol>
+</defs></svg>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark"><img src="app-icon.png" alt="" width="30" height="30"></div>
+      <div class="brand-text"><b>Arca</b><span>压缩 · 解压</span></div>
+    </div>
+
+    <nav class="nav" aria-label="主导航">
+      <div class="nav-label">工作区</div>
+      <button class="nav-item is-active" data-nav="compress" aria-controls="view-compress">
+        <svg><use href="#i-compress"/></svg><span>压缩</span>
+      </button>
+      <button class="nav-item" data-nav="extract" aria-controls="view-extract">
+        <svg><use href="#i-extract"/></svg><span>解压</span>
+      </button>
+      <button class="nav-item" data-nav="queue" aria-controls="view-queue">
+        <svg><use href="#i-list"/></svg><span>任务</span>
+        <span class="count hidden" id="nav-count">0</span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <!-- 最近任务：侧栏下半段原本是一整片空白（窗口越高越空）。放进底部簇里，
+           由 footer 的 margin-top:auto 推到底——空白落在导航与这一簇之间。 -->
+      <div class="rail-recent hidden" id="rail-recent">
+        <div class="nav-label">最近任务</div>
+        <div id="rail-recent-list"></div>
+      </div>
+      <div class="engine-card" id="engine-card" title="压缩引擎">
+        <span class="dot"></span>
+        <div><b id="engine-name">7-Zip</b><small id="engine-ver">检测中…</small></div>
+      </div>
+      <button class="nav-item" id="btn-settings">
+        <svg><use href="#i-gear"/></svg><span>设置</span>
+      </button>
+      <!-- 落款：侧栏底部这一簇本来就是「关于这个 App」的元信息（引擎、设置），
+           作者署名放在簇尾，常驻可见但不占主舞台。href 保证可复制/可右键，
+           点击一律走 native('openUrl')，页面自己永不跳转。 -->
+      <a class="rail-credit" id="rail-credit"
+         href="https://www.xiaohongshu.com/user/profile/5b808639405a2f00012e744a"
+         aria-label="Watson inside 的小红书主页（在浏览器中打开）"
+         title="在小红书查看 Watson inside">Watson inside<svg><use href="#i-external"/></svg></a>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <header class="topbar">
+      <div>
+        <h1 id="view-title">压缩</h1>
+        <p id="view-sub">把文件收进一个整洁的归档里</p>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn" id="btn-theme" title="切换外观" aria-label="切换外观">
+          <svg><use href="#i-moon"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="scroll" id="scroll">
+
+      <!-- ============================================================ 压缩 -->
+      <section class="view is-active" id="view-compress">
+        <div class="drop" id="drop-c" tabindex="0" role="button" aria-label="添加要压缩的文件">
+          <div class="drop-icon"><svg><use href="#i-compress"/></svg></div>
+          <h3>把文件或文件夹拖到这里</h3>
+          <p>也可以点按选择，或按 ⌘O</p>
+          <button class="btn ghost" id="c-pick">
+            <svg><use href="#i-plus"/></svg>选择文件
+          </button>
+        </div>
+
+        <div class="card hidden" id="c-files">
+          <div class="card-head">
+            <span class="t">待压缩</span>
+            <span class="meta" id="c-meta">0 项</span>
+            <span class="spacer"></span>
+            <button class="btn quiet" id="c-add"><svg><use href="#i-plus"/></svg>添加</button>
+            <button class="btn quiet" id="c-clear">清空</button>
+          </div>
+          <div class="file-list" id="c-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="opt-row">
+              <label for="c-format">格式</label>
+              <div class="opt-field">
+                <div class="seg" id="c-format" role="tablist">
+                  <div class="seg-pill"></div>
+                </div>
+                <span class="opt-hint" id="c-format-hint"></span>
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <label for="c-level">压缩级别</label>
+              <div class="opt-field">
+                <div class="range-wrap">
+                  <input type="range" id="c-level" min="0" max="5" step="1" value="3">
+                  <span class="level-name" id="c-level-name">标准</span>
+                </div>
+                <span class="opt-hint" id="c-level-hint">速度与体积平衡</span>
+              </div>
+            </div>
+
+            <div class="opt-row" id="c-split-row">
+              <label for="c-split">分卷大小</label>
+              <div class="opt-field">
+                <select class="select" id="c-split" style="min-width:132px"></select>
+                <input class="input hidden" id="c-split-custom" type="text" inputmode="decimal"
+                       placeholder="如 120m / 1.5g" style="width:118px">
+                <span class="opt-hint" id="c-split-hint"></span>
+              </div>
+            </div>
+
+            <div class="opt-row" id="c-pw-row">
+              <label for="c-pw">密码</label>
+              <div class="opt-field">
+                <div class="pw-wrap">
+                  <input class="input" id="c-pw" type="password" placeholder="留空则不加密"
+                         autocomplete="new-password" spellcheck="false">
+                  <div class="pw-tools">
+                    <button class="icon-btn" id="c-pw-gen" title="生成强密码" aria-label="生成强密码"><svg><use href="#i-dice"/></svg></button>
+                    <button class="icon-btn" id="c-pw-eye" title="显示密码" aria-label="显示密码"><svg><use href="#i-eye"/></svg></button>
+                  </div>
+                </div>
+                <div class="strength" id="c-pw-strength" data-s="0"><i></i><i></i><i></i><i></i></div>
+                <span class="strength-text" id="c-pw-text"></span>
+              </div>
+            </div>
+
+            <div class="opt-row" id="c-names-row">
+              <label>文件名</label>
+              <div class="opt-field">
+                <div class="switch">
+                  <button class="toggle" id="c-names" role="switch" aria-checked="true" aria-label="加密文件名"></button>
+                  <label for="c-names">加密文件名（隐藏目录内容）</label>
+                </div>
+                <span class="opt-hint" id="c-names-hint"></span>
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <label>保存到</label>
+              <div class="opt-field">
+                <button class="path-pill" id="c-dest">
+                  <svg><use href="#i-folder"/></svg><span id="c-dest-text">与源文件相同</span>
+                </button>
+                <input class="input" id="c-name" type="text" placeholder="归档名称" style="width:190px">
+              </div>
+            </div>
+
+            <div class="opt-row" style="border-bottom:0;padding-bottom:0">
+              <label></label>
+              <div class="opt-field">
+                <button class="adv-toggle" id="c-adv-toggle" aria-expanded="false">
+                  <svg><use href="#i-chevron"/></svg>高级选项
+                </button>
+              </div>
+            </div>
+            <div class="adv-body" id="c-adv">
+              <div class="opt-row" id="c-method-row">
+                <label for="c-method">算法</label>
+                <div class="opt-field">
+                  <select class="select" id="c-method" style="min-width:120px"></select>
+                  <span class="opt-hint">7Z 可选 LZMA2 / PPMd 等</span>
+                </div>
+              </div>
+              <div class="opt-row">
+                <label>元数据</label>
+                <div class="opt-field">
+                  <div class="switch">
+                    <button class="toggle" id="c-exclude" role="switch" aria-checked="true" aria-label="忽略 macOS 元数据"></button>
+                    <label for="c-exclude">忽略 .DS_Store、__MACOSX 等</label>
+                  </div>
+                </div>
+              </div>
+              <div class="opt-row" id="c-solid-row">
+                <label>完整性</label>
+                <div class="opt-field">
+                  <div class="switch">
+                    <button class="toggle" id="c-solid" role="switch" aria-checked="true" aria-label="固实压缩"></button>
+                    <label for="c-solid">固实压缩（体积更小，解压稍慢）</label>
+                  </div>
+                </div>
+              </div>
+              <div class="opt-row" id="c-par2-row">
+                <label>恢复记录</label>
+                <div class="opt-field">
+                  <div class="switch">
+                    <button class="toggle" id="c-par2" role="switch" aria-checked="false"
+                            aria-label="生成 PAR2 恢复记录" aria-describedby="c-par2-hint"></button>
+                    <label for="c-par2">生成 PAR2 恢复记录（可修复损坏的分卷）</label>
+                  </div>
+                  <select class="select hidden" id="c-par2-pct" style="min-width:88px"></select>
+                  <div class="switch hidden" id="c-par2-single-row">
+                    <button class="toggle" id="c-par2-single" role="switch" aria-checked="false" aria-label="单卷模式"></button>
+                    <label for="c-par2-single">单卷模式（合成一个文件；修复需整卷读取）</label>
+                    <button class="hint-btn" id="c-par2-single-help" aria-expanded="false"
+                            aria-controls="c-par2-single-note" aria-label="单卷模式说明"
+                            title="单卷模式说明">?</button>
+                  </div>
+                  <p class="opt-note hidden" id="c-par2-single-note">把所有恢复数据合成一个 .vol 文件：目录更干净，总开销也略小；修复时必须整卷读取。适合本机留档或一次性传输；若要分批上传/下载（网盘、Usenet），保持默认分卷更好——只取需要的那一卷即可。</p>
+                  <span class="opt-hint" id="c-par2-hint" role="status" aria-live="polite">压缩后追加冗余数据，占用额外空间</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="actionbar">
+          <div class="action-meta">
+            <b id="c-outpath">—</b>
+            <span id="c-outhint">选择文件后即可开始</span>
+          </div>
+          <div class="action-btns">
+            <button class="btn primary" id="c-start" disabled>开始压缩<kbd>⌘↵</kbd></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ 解压 -->
+      <section class="view" id="view-extract">
+        <div class="drop" id="drop-x" tabindex="0" role="button" aria-label="选择压缩包">
+          <div class="drop-icon"><svg><use href="#i-extract"/></svg></div>
+          <h3>把压缩包拖到这里</h3>
+          <p>支持 ZIP · 7Z · RAR（含分卷）</p>
+          <button class="btn ghost" id="x-pick">
+            <svg><use href="#i-plus"/></svg>选择压缩包
+          </button>
+        </div>
+
+        <div class="hidden" id="x-panel" style="display:flex;flex-direction:column;gap:14px">
+          <div class="card">
+            <div class="card-head">
+              <span class="t" id="x-name">—</span>
+              <span class="meta" id="x-path"></span>
+              <span class="spacer"></span>
+              <span class="chip accent hidden" id="x-chip-lock"><svg><use href="#i-lock"/></svg>已加密</span>
+              <span class="chip hidden" id="x-chip-split"><svg><use href="#i-layers"/></svg>分卷</span>
+              <span class="chip hidden" id="x-chip-par2" title="同目录下有 PAR2 恢复记录"><svg><use href="#i-check-circle"/></svg><span id="x-chip-par2-t">恢复记录</span></span>
+              <button class="btn quiet" id="x-change">更换</button>
+            </div>
+            <div class="meta-grid">
+              <div class="meta-cell"><span>格式</span><b id="x-fmt">—</b></div>
+              <div class="meta-cell"><span>压缩包大小</span><b id="x-size">—</b></div>
+              <div class="meta-cell"><span>原始大小</span><b id="x-raw">—</b></div>
+              <div class="meta-cell"><span>文件数</span><b id="x-count">—</b></div>
+            </div>
+            <div class="table-wrap" id="x-table-wrap">
+              <table class="entries">
+                <thead><tr><th>名称</th><th style="width:96px;text-align:right">大小</th><th style="width:150px">修改时间</th></tr></thead>
+                <tbody id="x-table"></tbody>
+              </table>
+            </div>
+            <div class="card-foot" id="x-table-foot">
+              <span class="opt-hint" id="x-more"></span>
+              <span class="spacer" style="flex:1"></span>
+              <span class="opt-hint" id="x-ratio"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-body">
+              <div class="opt-row" id="x-pw-row">
+                <label for="x-pw">密码</label>
+                <div class="opt-field">
+                  <div class="pw-wrap">
+                    <input class="input" id="x-pw" type="password" placeholder="该压缩包需要密码"
+                           autocomplete="off" spellcheck="false">
+                    <div class="pw-tools">
+                      <button class="icon-btn" id="x-pw-eye" title="显示密码" aria-label="显示密码"><svg><use href="#i-eye"/></svg></button>
+                    </div>
+                  </div>
+                  <button class="btn ghost" id="x-verify">验证</button>
+                </div>
+              </div>
+              <div class="opt-row">
+                <label>解压到</label>
+                <div class="opt-field">
+                  <button class="path-pill" id="x-dest">
+                    <svg><use href="#i-folder"/></svg><span id="x-dest-text">与压缩包同目录</span>
+                  </button>
+                  <div class="switch">
+                    <button class="toggle" id="x-folder" role="switch" aria-checked="true" aria-label="创建同名文件夹"></button>
+                    <label for="x-folder">建同名文件夹</label>
+                  </div>
+                </div>
+              </div>
+              <div class="opt-row" style="border-bottom:0">
+                <label for="x-over">重名文件</label>
+                <div class="opt-field">
+                  <select class="select" id="x-over" style="min-width:150px">
+                    <option value="rename">自动重命名（推荐）</option>
+                    <option value="overwrite">直接覆盖</option>
+                    <option value="skip">跳过已存在</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="actionbar">
+            <div class="action-meta">
+              <b id="x-outpath">—</b>
+              <span id="x-outhint">读取中…</span>
+            </div>
+            <div class="action-btns">
+              <button class="btn ghost" id="x-test">仅校验</button>
+              <button class="btn primary" id="x-start">开始解压<kbd>⌘↵</kbd></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="center-note warn hidden" id="x-error">
+          <svg><use href="#i-alert"/></svg><span id="x-error-text"></span>
+        </div>
+      </section>
+
+      <!-- ============================================================ 任务 -->
+      <section class="view" id="view-queue">
+        <div class="card">
+          <div class="card-head">
+            <span class="t">进行中与最近</span>
+            <span class="meta" id="q-meta"></span>
+            <span class="spacer"></span>
+            <button class="btn quiet" id="q-clear">清理已完成</button>
+          </div>
+          <div id="q-list"></div>
+        </div>
+        <div class="empty" id="q-empty">
+          <svg><use href="#i-list"/></svg>
+          <b>还没有任务</b>
+          <p>压缩与解压的进度、速度和结果都会出现在这里</p>
+          <button class="btn ghost" id="q-empty-go" style="margin-top:10px">去压缩文件…</button>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<div class="drag-overlay" id="drag-overlay">
+  <div class="drag-card">
+    <svg><use href="#i-plus"/></svg>
+    <b>松手即可添加</b>
+    <span id="drag-count">文件将加入当前任务</span>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="menu.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
