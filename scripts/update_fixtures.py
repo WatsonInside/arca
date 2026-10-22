@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 
 def history_text(kind):
-    versions = ["26.05"]
+    versions = ["26.06"]
     if kind == "long":
         versions += [f"27.{n:02d}" for n in range(1, 14)]
     elif kind != "short":
@@ -13,13 +13,13 @@ def history_text(kind):
         f"{version}  2026-10-22\n- Synthetic regression fixture CVE-2099-0001 security fix.\n"
         "- Synthetic release notes exercise the actual history parser and dialog layout."
         for version in reversed(versions)
-    ) + "\n\n26.04  2026-10-01\n- Baseline, excluded from the update span.\n"
+    ) + "\n\n26.05  2026-10-21\n- Baseline, excluded from the update span.\n"
 
 
 @contextmanager
 def upstream(kind):
     from arca import updates
-    latest = "27.13" if kind == "long" else "26.05"
+    latest = "27.13" if kind == "long" else "26.06"
     history = history_text(kind).encode()
     page = (f'Download 7-Zip {latest} (2026-10-22) '
             f'<a href="a/7z{latest.replace(".", "")}-mac.tar.xz">macOS</a>').encode()

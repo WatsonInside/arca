@@ -130,11 +130,11 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
             "import sys,json,signal;sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
             "from update_fixtures import upstream;fixture=upstream(sys.argv[4]);fixture.__enter__();"
             "from arca import engine,server;from arca.settings import Settings;"
-            "e=engine.Engine();assert e.version=='26.04',e.version;"
+            "e=engine.Engine();assert e.version=='26.05',e.version;"
             "ctx=server.AppContext(e,Settings(),sys.argv[1]+'/arca/web');"
             "service=server.Server(ctx);service.start();"
             "open(sys.argv[3],'w').write(json.dumps({'port':service.port,'token':ctx.token}));"
-            "print('Bundled 26.04 server with controlled '+sys.argv[4]+' upstream fixture',flush=True);signal.pause()"
+            "print('Bundled 26.05 server with controlled '+sys.argv[4]+' upstream fixture',flush=True);signal.pause()"
         )
         command = PY + ["-c", bootstrap, str(app_source), str(ROOT / "scripts"), str(port), fixture]
     with tempfile.TemporaryFile(mode="w+") as output:

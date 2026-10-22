@@ -281,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/appupdate/dismiss":
                 ctx.app_updater.dismiss(body.get("version"))
                 return self._json({"ok": True})
+            if path == "/api/appupdate/restart":
+                return self._json(ctx.app_updater.relaunch())
             if path == "/api/engine/update/apply":
                 return self._engine_apply(body)
             if path == "/api/engine/update/snooze":
@@ -339,6 +341,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "not found"})
         except eng.EngineError as exc:
             return self._err(str(exc))
+        except appupdate.UpdateError as exc:
+            # User-facing wording already: no class prefix, and a client error
+            # rather than a 500 (stale check, unverified digest, missing update).
+            return self._err(str(exc), 400)
+        except ValueError as exc:
+            # Repo format / version parsing: the message is the explanation.
+            return self._err(str(exc) or "请求参数无效", 400)
         except Exception as exc:  # noqa: BLE001
             return self._err(util.friendly_error(exc)
                              or f"{exc.__class__.__name__}: {exc}", 500)

@@ -7,7 +7,9 @@ import os
 from pathlib import Path, PurePosixPath
 import plistlib
 import re
+import shlex
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -268,6 +270,27 @@ class Updater:
         with self.lock:
             self._confirm(confirmed_version)
             self.settings.dismiss_app_version(self.cached['latest'])
+
+    def relaunch(self):
+        """Restart into the freshly installed bundle.
+
+        A detached shell waits for this process to exit, then opens the bundle
+        from disk.  Waiting matters: launching while the old process is still
+        alive would race the same bundle path and, on a slow machine, re-open
+        the very executable we are replacing.
+        """
+        if not self.marker.exists() or self.bundle is None:
+            raise UpdateError("还没有待生效的应用更新")
+        if not (self.installer and self.installer.snapshot().get('phase') == 'done'):
+            raise UpdateError("应用更新尚未安装完成")
+        target = str(self.bundle)
+        script = (f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.2; done; '
+                  f'/usr/bin/open -n {shlex.quote(target)}')
+        subprocess.Popen(["/bin/sh", "-c", script], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        threading.Timer(0.5, lambda: os._exit(0)).start()
+        return {"ok": True, "restarting": True}
 
     def startup(self, ready=False):
         if not self.marker.exists():

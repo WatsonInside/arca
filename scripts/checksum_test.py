@@ -156,7 +156,7 @@ class ChecksumTests(unittest.TestCase):
         from types import SimpleNamespace
         for failure in ("无法获取校验值", "校验不符，已放弃安装"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
-                engine = SimpleNamespace(zz="existing", version="26.04", source="bundled")
+                engine = SimpleNamespace(zz="existing", version="26.05", source="bundled")
                 job = updates.Installer(engine, "https://www.7-zip.org/a/7z2605-mac.tar.xz", "26.05")
                 with patch.object(updates, "engines_dir", return_value=tmp), \
                      patch.object(job, "_download", side_effect=lambda path: Path(path).write_bytes(DATA)), \

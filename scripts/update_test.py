@@ -213,8 +213,14 @@ def main():
         security = updates._security_count(history, CURRENT, LATEST)
         check("统计了安全修复数量", (f"{security} 项安全修复" in st["meta"])
               if security else "安全修复" not in st["meta"], st["meta"])
-        check("亮点每种类型各一条", 2 <= len(st["highlights"]) <= 5
-              and len({h["tag"] for h in st["highlights"]}) == len(st["highlights"]),
+        # A release without hand-written Chinese notes shows the official list
+        # only, so an empty highlight block is legitimate; otherwise the tags
+        # must be distinct (one line per kind).
+        curated = bool((updates.NOTES_ZH or {}).get(LATEST))
+        check("亮点每种类型各一条",
+              (not curated and not st["highlights"])
+              or (2 <= len(st["highlights"]) <= 5
+                  and len({h["tag"] for h in st["highlights"]}) == len(st["highlights"])),
               str([h["tag"] for h in st["highlights"]]))
         check("亮点文字是中文",
               all(any("\u4e00" <= ch <= "\u9fff" for ch in h["text"]) for h in st["highlights"]))

@@ -1,6 +1,6 @@
 """Zstandard support (.zst / .tar.zst).
 
-7-Zip has no zstd codec -- neither the bundled 23.01 nor the current 26.04
+7-Zip has no zstd codec -- neither the bundled 23.01 nor the current 26.05
 advertise one in `7zz i`, and Igor Pavlov has said the 7z container will not
 gain one.  So a zstd "archive" here is really a tar stream piped through the
 official zstd CLI, which is what every other tool means by `.tar.zst` anyway.

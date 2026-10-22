@@ -25,6 +25,7 @@ DEFAULTS = {
     # Engine updates: check quietly on launch, and remember a version the user
     # asked not to be nagged about.
     "checkEngineUpdates": True,
+    "checkAppUpdates": True,
     "engineSkipVersion": "",
     # "稍后" is a snooze, not a decision: remember until when (epoch seconds).
     "engineSnoozeVersion": "",

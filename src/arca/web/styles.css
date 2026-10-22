@@ -938,7 +938,7 @@ table.entries .dir { color: var(--accent); }
 .sheet-head h2 { margin: 0; font-size: 15.5px; letter-spacing: -0.02em; }
 .sheet-head .spacer { flex: 1; }
 .sheet-body { overflow-y: auto; flex: 1; min-height: 0; padding: 0 18px; }
-.sheet-section { padding: 2px 0 6px; }
+.sheet-section { padding: 2px 0 4px; }
 .sheet-section h3 {
   margin: 0 0 3px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em;

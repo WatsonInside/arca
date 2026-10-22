@@ -1,6 +1,6 @@
 # Arca · macOS 压缩 / 解压工具
 
-原生 macOS 应用（NSWindow + WKWebView 外壳 + 内置 7-Zip 26.04 / zstd 1.5.7 / par2 1.4.0，开箱即最新），支持 **7Z / ZIP / RAR / TAR.ZST**  
+原生 macOS 应用（NSWindow + WKWebView 外壳 + 内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0，开箱即最新），支持 **7Z / ZIP / RAR / TAR.ZST**  
 四种格式、**分卷压缩**、**AES-256 加密**与密码校验，压缩后可附带 **PAR2 恢复记录**（损坏可修复）。  
 **Finder 右键**可直接「用 Arca 压缩 / 解压」（系统服务），设置里可一键把它设为  
 **ZIP / 7Z / RAR 等九种格式的默认打开方式**。  

@@ -1765,9 +1765,10 @@ async function openSettings(focus) {
   // One line replaces the old "引擎" + "版本" pair: the same three versions
   // used to be printed twice, in two sections, one scroll apart.
   const comps = (meta.components || []).filter((c) => c.id !== '7zz');
+  // Component versions live on their own rows below, so the engine line stays
+  // short instead of repeating them.
   const versionLine = [
     `${meta.engine?.engine || '7-Zip'} ${meta.engine?.engineVersion || '?'}`,
-    ...comps.map((c) => `${c.label} ${c.version ? 'v' + c.version : '缺失'}`),
     meta.engine?.rarEncode ? 'RAR 可创建' : 'RAR 只读',
   ].join(' · ');
   const back = document.createElement('div');
@@ -1780,14 +1781,11 @@ async function openSettings(focus) {
       </div>
       <div class="sheet-body">
       <div class="sheet-section">
-        <h3>外观与行为</h3>
+        <h3>常规</h3>
         <div class="sheet-row">
           <label>主题<small>跟随系统或强制指定</small></label>
           <div class="seg" id="set-theme"></div>
         </div>
-      </div>
-      <div class="sheet-section">
-        <h3>压缩默认值</h3>
         <div class="sheet-row">
           <label>压缩格式</label>
           <select class="select" id="set-format" style="width:110px">
@@ -1800,71 +1798,24 @@ async function openSettings(focus) {
             ${LEVEL_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('')}
           </select>
         </div>
-      </div>
-      <div class="sheet-section">
-        <h3>引擎与组件</h3>
-        <div class="sheet-row">
-          <label>版本<small>${esc(versionLine)}</small></label>
-          <div class="row-actions">
-            <button class="btn ghost" id="set-updnow">检查更新…</button>
-            <button class="toggle" id="set-updcheck" role="switch" aria-checked="${s.checkEngineUpdates === false ? 'false' : 'true'}" title="启动时自动检查 7-Zip 更新"></button>
-          </div>
-        </div>
         <details class="sheet-fold">
-          <summary>${icon('i-chevron')}<span>高级与排障</span><span class="fold-hint">WinRAR · 组件 · 快捷键</span></summary>
-          <details class="sheet-fold" id="set-app-about">
-            <summary>${icon('i-chevron')}<span>关于与应用更新</span></summary>
-            <div class="sheet-row">
-              <label>GitHub 仓库<small>owner/repo，留空关闭应用更新</small></label>
-              <input class="input" id="set-app-repo" aria-label="应用更新 GitHub 仓库" value="${esc(s.appUpdateRepo || '')}" placeholder="owner/repo" style="width:180px">
-              <button class="btn ghost" id="set-app-save">保存</button>
-            </div>
-            <div class="sheet-row">
-              <label>应用更新<small id="set-app-version">${s.appUpdateRepo ? '展开后读取应用版本' : '已关闭'}</small></label>
-              <button class="btn ghost" id="set-app-check" ${s.appUpdateRepo ? '' : 'disabled'}>检查应用更新…</button>
-            </div>
-          </details>
+          <summary>${icon('i-chevron')}<span>更多压缩选项</span><span class="fold-hint">提示音 · 系统文件 · WinRAR</span></summary>
           <div class="sheet-row">
-            <label id="set-saved-count">已记住 ${saved.count} 个加密包的密码<small>仅保存在 macOS 钥匙串，最多 50 个</small></label>
-            <button class="btn quiet" id="set-clear-passwords" ${saved.count ? '' : 'disabled'}>全部清除</button>
-          </div>
-          <div class="sheet-row">
-            <label id="set-password-auth-label">使用触控 ID 保护密码<small id="set-password-auth-help">开启后已记住的密码需重新保存才能受保护<br>无触控 ID 的 Mac 会改为要求登录密码</small></label>
-            <button class="toggle" id="set-password-auth" role="switch" aria-labelledby="set-password-auth-label" aria-describedby="set-password-auth-help" aria-checked="${s.passwordAuth === 'touchid' ? 'true' : 'false'}"></button>
+            <label>完成提示音<small>压缩或解压完成后播放系统提示音</small></label>
+            <button class="toggle" id="set-sound" role="switch" aria-checked="${s.suppressSound ? 'false' : 'true'}"></button>
           </div>
           <div class="sheet-row">
             <label>跳过系统文件<small>.DS_Store、__MACOSX、._* 等</small></label>
             <button class="toggle" id="set-meta" role="switch" aria-checked="${s.excludeMeta ? 'true' : 'false'}"></button>
           </div>
           <div class="sheet-row">
-            <label>完成提示音<small>压缩或解压完成后播放系统提示音</small></label>
-            <button class="toggle" id="set-sound" role="switch" aria-checked="${s.suppressSound ? 'false' : 'true'}"></button>
-          </div>
-          <div class="sheet-row">
-            <label>右键菜单看不到？<small>入口在「快速操作」或最底部「服务」子菜单；首次使用需在快捷键设置里勾选</small></label>
-            <button class="btn ghost" id="set-svc-prefs">打开快捷键设置</button>
-          </div>
-          <div class="sheet-row">
             <label>WinRAR 命令行<small>用于创建 .rar 归档（可选）</small></label>
             <button class="btn ghost" id="set-rar">${meta.engine?.rarEncode ? '更换…' : '选择…'}</button>
           </div>
-          ${(meta.components || []).filter((c) => c.id !== '7zz').map((c) => `
-          <div class="sheet-row" data-comp="${esc(c.id)}">
-            <label>${esc(c.label)}<small>${esc(c.kind)} · ${c.version ? 'v' + esc(c.version) : '缺失'} · ${compSourceText(c.source)}</small></label>
-            <div class="row-actions">
-              <button class="btn ghost" data-comp-check="${esc(c.id)}">检查更新…</button>
-              ${c.source === 'user' ? `<button class="btn quiet" data-comp-reset="${esc(c.id)}">恢复内置</button>` : ''}
-            </div>
-          </div>`).join('') || '<div class="sheet-row"><label>没有可用的组件</label></div>'}
-          ${meta.engine?.engineSource === 'user' ? `
-          <div class="sheet-row">
-            <label>引擎来源<small>已更新（应用外安装）</small></label>
-            <button class="btn quiet" id="set-updreset">恢复内置</button>
-          </div>` : ''}
         </details>
       </div>
       <div class="sheet-section" id="set-default">
-        <h3>打开方式</h3>
+        <h3>系统集成</h3>
         <div class="sheet-row">
           <label>解压 / 浏览压缩包<small>双击压缩包用哪个 App 打开</small></label>
           <span class="chip ${integ.ours ? 'ok' : ''}" id="set-def-chip">${integ.ours || 0}/${integ.total || 0} 项为 Arca</span>
@@ -1873,36 +1824,86 @@ async function openSettings(focus) {
             <button class="btn quiet" id="set-def-off" ${integ.ours ? '' : 'disabled'}>恢复默认</button>
           </div>
         </div>
-        <details class="sheet-fold" ${(integ.ours || 0) < (integ.total || 0) ? 'open' : ''} id="set-def-detail">
-          <summary>${icon('i-chevron')}<span>逐项状态</span><span class="fold-hint">ZIP · 7Z · RAR · TAR · ZST</span></summary>
-          ${mainTypes.map((t) => `
-            <div class="sheet-row" data-def="${esc(t.ext)}">
-              <label>${esc(t.label)}<small>${esc(t.uti || '未注册')}</small></label>
-              <span class="chip ${t.ours ? 'ok' : ''}">${esc(t.handlerName || '系统默认')}</span>
-            </div>`).join('')}
-        </details>
-      </div>
-      <div class="sheet-section" id="set-finder">
-        <h3>Finder 集成</h3>
-        <div class="sheet-row">
+        <div class="sheet-row" id="set-finder">
           <label>用 Arca 压缩 / 解压<small>选中项目（可多选）→ 右键 → 快速操作 / 服务子菜单</small></label>
           <div class="row-actions">
             <span class="chip ${integ.quickActions ? 'ok' : ''}">${integ.quickActions ? '已安装' : '未安装'}</span>
             <button class="btn primary" id="set-qa-install">${integ.quickActions ? '重新安装' : '安装快速操作'}</button>
           </div>
         </div>
-        <div class="sheet-row">
-          <label>右键后直接开始压缩<small>默认关闭：文件进压缩页，选好格式与选项再按「开始压缩」</small></label>
-          <button class="toggle" id="set-svc-auto" role="switch" aria-checked="${svcAuto ? 'true' : 'false'}"></button>
-        </div>
-        <div class="sheet-row">
-          <label>右键压缩的格式<small>只影响 Finder 右键，不改上面的默认格式</small></label>
-          <select class="select" id="set-svc-format" style="width:150px">
-            ${(integ.creatable || [{ id: '', label: '跟随默认格式' }]).map((f) =>
-              `<option value="${esc(f.id)}">${esc(f.label)}</option>`).join('')}
-          </select>
-        </div>
+        <details class="sheet-fold" ${(integ.ours || 0) < (integ.total || 0) ? 'open' : ''} id="set-def-detail">
+          <summary>${icon('i-chevron')}<span>逐项打开方式</span><span class="fold-hint">ZIP · 7Z · RAR · TAR · ZST</span></summary>
+          ${mainTypes.map((t) => `
+            <div class="sheet-row" data-def="${esc(t.ext)}">
+              <label>${esc(t.label)}<small>${esc(t.uti || '未注册')}</small></label>
+              <span class="chip ${t.ours ? 'ok' : ''}">${esc(t.handlerName || '系统默认')}</span>
+            </div>`).join('')}
+        </details>
+        <details class="sheet-fold">
+          <summary>${icon('i-chevron')}<span>右键菜单细节</span><span class="fold-hint">直接压缩 · 格式 · 入口</span></summary>
+          <div class="sheet-row">
+            <label>右键后直接开始压缩<small>默认关闭：文件进压缩页，选好格式与选项再按「开始压缩」</small></label>
+            <button class="toggle" id="set-svc-auto" role="switch" aria-checked="${svcAuto ? 'true' : 'false'}"></button>
+          </div>
+          <div class="sheet-row">
+            <label>右键压缩的格式<small>只影响 Finder 右键，不改上面的默认格式</small></label>
+            <select class="select" id="set-svc-format" style="width:150px">
+              ${(integ.creatable || [{ id: '', label: '跟随默认格式' }]).map((f) =>
+                `<option value="${esc(f.id)}">${esc(f.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="sheet-row">
+            <label>右键菜单看不到？<small>入口在「快速操作」或最底部「服务」子菜单；首次使用需在快捷键设置里勾选</small></label>
+            <button class="btn ghost" id="set-svc-prefs">打开快捷键设置</button>
+          </div>
+        </details>
       </div>
+      <div class="sheet-section">
+        <h3>更新与密码</h3>
+        <div class="sheet-row">
+          <label>应用更新<small id="set-app-version">${s.appUpdateRepo ? 'Arca ' + (meta.version || '') : '未配置仓库，功能关闭'}</small></label>
+          <div class="row-actions">
+            <button class="btn ghost" id="set-app-check" ${s.appUpdateRepo ? '' : 'disabled'}>检查更新…</button>
+            <button class="toggle" id="set-app-autocheck" role="switch" aria-label="启动时自动检查应用更新" aria-checked="${s.checkAppUpdates === false ? 'false' : 'true'}" title="启动时自动检查应用更新"></button>
+          </div>
+        </div>
+        <div class="sheet-row">
+          <label>内置引擎<small>${esc(versionLine)}${meta.engine?.engineSource === 'user' ? ' · 已使用应用外安装版本' : ''}</small></label>
+          <div class="row-actions">
+            <button class="btn ghost" id="set-updnow">检查更新…</button>
+            <button class="toggle" id="set-updcheck" role="switch" aria-checked="${s.checkEngineUpdates === false ? 'false' : 'true'}" title="启动时自动检查 7-Zip 更新"></button>
+          </div>
+        </div>
+        <div class="sheet-row">
+          <label id="set-saved-count">加密包密码<small>已记住 ${saved.count} 个，仅存本机钥匙串</small></label>
+          <div class="row-actions">
+            <button class="toggle" id="set-password-auth" role="switch" aria-label="读取记住的密码前要求触控 ID 或登录密码" aria-checked="${s.passwordAuth === 'touchid' ? 'true' : 'false'}" title="读取记住的密码前要求触控 ID 或登录密码"></button>
+            <button class="btn quiet" id="set-clear-passwords" ${saved.count ? '' : 'disabled'}>全部清除</button>
+          </div>
+        </div>
+        <details class="sheet-fold">
+          <summary>${icon('i-chevron')}<span>更新来源与组件</span><span class="fold-hint">GitHub 仓库 · zstd · PAR2</span></summary>
+          <div class="sheet-row">
+            <label>更新来源<small>owner/repo，留空关闭应用更新</small></label>
+            <input class="input" id="set-app-repo" aria-label="应用更新 GitHub 仓库" value="${esc(s.appUpdateRepo || '')}" placeholder="owner/repo" style="width:180px">
+            <button class="btn ghost" id="set-app-save">保存</button>
+          </div>
+          ${meta.engine?.engineSource === 'user' ? `
+          <div class="sheet-row">
+            <label>引擎来源<small>已使用应用外安装的版本</small></label>
+            <button class="btn quiet" id="set-updreset">恢复内置</button>
+          </div>` : ''}
+          ${(meta.components || []).filter((c) => c.id !== '7zz').map((c) => `
+          <div class="sheet-row" data-comp="${esc(c.id)}">
+            <label>${esc(c.label)}<small>${esc(c.kind)} · ${c.version ? 'v' + esc(c.version) : '缺失'} · ${compSourceText(c.source)}</small></label>
+            <div class="row-actions">
+              <button class="btn ghost" data-comp-check="${esc(c.id)}">检查更新…</button>
+              ${c.source === 'user' ? `<button class="btn quiet" data-comp-reset="${esc(c.id)}">恢复内置</button>` : ''}
+            </div>
+          </div>`).join('') || '<div class="sheet-row"><label>没有可用的组件</label></div>'}
+        </details>
+      </div>
+
       <div class="sheet-foot">
         <span class="foot-version">v${esc(meta.version || '1.0.0')}</span>
         <span class="spacer"></span>
@@ -2049,6 +2050,12 @@ async function openSettings(focus) {
     e.currentTarget.setAttribute('aria-checked', String(next));
     patchSettings({ checkEngineUpdates: next });
   };
+  const appAuto = $('#set-app-autocheck', back);
+  if (appAuto) appAuto.onclick = (e) => {
+    const next = e.currentTarget.getAttribute('aria-checked') !== 'true';
+    e.currentTarget.setAttribute('aria-checked', String(next));
+    patchSettings({ checkAppUpdates: next });
+  };
   $('#set-updnow', back).onclick = async () => {
     close();
     const info = await checkEngineUpdate({ refresh: true, verbose: true });
@@ -2059,16 +2066,16 @@ async function openSettings(focus) {
   };
   async function loadAppUpdate(refresh = false) {
     const info = (await api('/appupdate' + (refresh ? '?refresh=1' : ''))).update;
+    const here = info.current || (state.meta && state.meta.version) || '?';
     $('#set-app-version', back).textContent = info.recovery || (info.enabled
-      ? `Arca ${info.current || '?'}${info.available ? ' · ' + (info.skipped ? '已跳过 ' : '新版本 ') + info.latest : ''}` : `Arca ${info.current || '?'} · 应用更新已关闭`);
+      ? `Arca ${here}${info.available ? ' · ' + (info.skipped ? '已跳过 ' : '新版本 ') + info.latest : ''}` : `Arca ${here} · 应用更新已关闭`);
     const button = $('#set-app-check', back);
     button.disabled = !info.enabled;
     button.textContent = info.available ? `新版本 ${info.latest} · 下载并更新` : '检查应用更新…';
     return info;
   }
-  $('#set-app-about', back).ontoggle = () => {
-    if ($('#set-app-about', back).open) loadAppUpdate().catch((err) => toast(err.message, 'err'));
-  };
+  // The repo row is visible now (no fold), so the version line loads on open.
+  if (s.appUpdateRepo) loadAppUpdate().catch((err) => toast(err.message, 'err'));
   $('#set-app-save', back).onclick = async () => {
     try {
       await patchSettings({ appUpdateRepo: $('#set-app-repo', back).value.trim() });
@@ -2088,10 +2095,10 @@ async function openSettings(focus) {
         highlights: info.highlights ? [{ tag: 'official', label: '应用', text: info.highlights }] : [],
       }), {
         id: 'app', title: '应用更新', chip: 'Arca', poll: '/appupdate', apply: '/appupdate/apply',
-        skip: true, dismiss: '/appupdate/dismiss',
-        doneText: () => '更新已就绪，重启应用生效',
-        toastText: () => '应用更新已就绪，重启应用生效',
-        note: '应用更新不会自动重启。新版本成功启动前保留旧应用以便恢复。',
+        skip: true, dismiss: '/appupdate/dismiss', restart: true,
+        doneText: () => '更新已下载并安装，重启后生效',
+        toastText: () => '应用更新已就绪，点击「立即重启」生效',
+        note: '重启会关闭当前窗口并打开新版本。新版本成功启动前保留旧应用以便恢复。',
       });
     } catch (err) { toast(err.message, 'err'); }
   };
@@ -2409,8 +2416,10 @@ function openUpdateSheet(info, opts) {
       msg.textContent = opts.doneText(st.version || '');
       pct.textContent = '100%';
       go.disabled = false;
-      go.innerHTML = `${icon('i-check')}完成`;
-      go.classList.remove('primary');
+      go.innerHTML = opts.restart
+        ? `${icon('i-refresh')}立即重启`
+        : `${icon('i-check')}完成`;
+      if (!opts.restart) go.classList.remove('primary');
       busy = false;
       $('#upd-skip', back).classList.add('hidden');
       // Nothing left to postpone and nothing left to decide: one primary
@@ -2461,7 +2470,23 @@ function openUpdateSheet(info, opts) {
     const inst = opts.id === '7zz'
       ? ((state.update && state.update.install) || {})
       : ((state.componentInstall && state.componentInstall[opts.id]) || {});
-    if (settled || inst.phase === 'done') { close(); return; }
+    if (settled || inst.phase === 'done') {
+      if (opts.restart && inst.phase === 'done') {
+        go.disabled = true;
+        go.innerHTML = `${icon('i-refresh')}正在重启…`;
+        try {
+          await api('/appupdate/restart', {});
+          return;            // the process exits on its own
+        } catch (err) {
+          go.disabled = false;
+          go.innerHTML = `${icon('i-refresh')}立即重启`;
+          toast(err.message, 'err');
+        }
+        return;
+      }
+      close();
+      return;
+    }
     go.disabled = true;
     try {
       const r = await api(opts.apply, { version: latest, id: opts.id });
@@ -2507,6 +2532,35 @@ async function maybeCheckEngineUpdate() {
     return openEngineUpdate(info);      // finish showing an interrupted update
   }
   openEngineUpdate(info);
+}
+
+/** Same shape for the app itself; silent unless a newer release exists. */
+async function maybeCheckAppUpdate() {
+  if (state.settings.checkAppUpdates === false) return;
+  if (!state.settings.appUpdateRepo) return;
+  if ($('.sheet.upd')) return;          // the engine dialog already asked
+  // One update prompt at a time: while the engine has news pending, the app
+  // check waits for the next launch instead of stacking a second dialog.
+  if (state.update && state.update.available && !state.update.skipped) return;
+  let info;
+  try {
+    info = (await api('/appupdate')).update;
+  } catch (_) {
+    return;                             // offline or rate-limited: stay quiet
+  }
+  if (!info || !info.ok || info.skipped) return;
+  const resuming = info.install && info.install.phase !== 'error';
+  if (!info.available && !resuming) return;
+  openUpdateSheet(Object.assign({}, info, {
+    page: `https://github.com/${info.repo}/releases`,
+    highlights: info.highlights ? [{ tag: 'official', label: '应用', text: info.highlights }] : [],
+  }), {
+    id: 'app', title: '应用更新', chip: 'Arca', poll: '/appupdate', apply: '/appupdate/apply',
+    skip: true, dismiss: '/appupdate/dismiss', restart: true,
+    doneText: () => '更新已下载并安装，重启后生效',
+    toastText: () => '应用更新已就绪，点击「立即重启」生效',
+    note: '重启会关闭当前窗口并打开新版本。新版本成功启动前保留旧应用以便恢复。',
+  });
 }
 
 /* --------------------------------------------------------------------- wire */
@@ -2867,6 +2921,9 @@ async function init() {
   renderEngineBadge();
   // Let the window settle first: the dialog should not race the first paint.
   setTimeout(maybeCheckEngineUpdate, 900);
+  // An app update sits behind the same quiet check, but only after the engine
+  // dialog had its chance to claim the screen.
+  setTimeout(maybeCheckAppUpdate, 1600);
 }
 
 document.addEventListener('DOMContentLoaded', init);
