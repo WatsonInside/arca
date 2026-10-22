@@ -1,0 +1,14 @@
+# --- build artifacts / local workspace ---
+/build/
+/release/
+/dist/
+/.tmp/
+__pycache__/
+*.pyc
+.DS_Store
+
+# --- local logs & secrets ---
+*.log
+gh-token.tmp
+gh-device.json
+/.workbuddy/

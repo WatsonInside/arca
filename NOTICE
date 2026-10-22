@@ -1,0 +1,21 @@
+Arca
+Copyright 2026 Arca authors
+
+This product includes software developed as part of the Arca project.
+
+The name "Arca", the Arca logo, and the product's UI text and visual design
+are NOT covered by the Apache License 2.0 grant of this repository and remain
+the property of the copyright holder. Forks and redistributions must replace
+or obtain separate permission for these brand assets.
+
+=======================================================================
+Third-party components bundled with this product (see vendor/THIRD-PARTY.md
+for full details and source availability):
+
+- 7-Zip (7zz)      LGPL-2.1 + unRAR restriction (separate executable)
+- zstd             BSD-3-Clause / GPL-2.0 dual (separate executable)
+- par2cmdline      GPL-2.0+ (separate executable; source available)
+- PyObjC           MIT (Python runtime dependencies)
+
+Corresponding source for GPL/LGPL components is obtainable from the
+upstream projects listed in vendor/THIRD-PARTY.md.
