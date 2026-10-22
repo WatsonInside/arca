@@ -11,6 +11,7 @@ Application Support directory instead of the user's:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -146,8 +147,14 @@ class UI:
 
 
 def main():
-    do_install = "--install" in sys.argv
-    ports = json.load(open(os.path.join(ROOT, "build", "port-update.json")))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--install", action="store_true")
+    parser.add_argument("--fixture", choices=("short", "long"))
+    parser.add_argument("--port-file", default=os.path.join(ROOT, "build", "port-update.json"))
+    args = parser.parse_args()
+    do_install = args.install
+    with open(args.port_file) as handle:
+        ports = json.load(handle)
     port, token = ports["port"], ports["token"]
 
     # a clean slate: no skip flag, and no stale check cache
@@ -159,10 +166,27 @@ def main():
     # 上游随时会发新版（本次写测试时刚发了 26.05），所以断言一律拿接口回报的
     # latest 做基准，而不是写死某个版本号——否则每次发版都要改测试。
     LATEST = meta.get("latest") or ""
+    CURRENT = meta["current"]
+    from arca import updates
+    from contextlib import nullcontext
+    from update_fixtures import upstream
+    with upstream(args.fixture) if args.fixture else nullcontext():
+        history = updates.fetch_history()
+    expected = sorted((v for v in history
+                       if updates.parse_version(CURRENT) < updates.parse_version(v)
+                       <= updates.parse_version(LATEST)),
+                      key=updates.parse_version, reverse=True)
+    bundled = api(port, token, "/meta")["engine"]
+    check("更新测试从内置引擎开始", bundled["engineSource"] == "bundled")
     print(f"  latest  : {meta['current']} -> {LATEST}  ({meta.get('released')})")
 
-    profile = os.path.join(ROOT, "build", f"chrome-upd-{int(time.time())}")
-    proc, ws = cdp.launch(9447, profile)
+    import socket
+    import tempfile
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        debug_port = probe.getsockname()[1]
+    profile = tempfile.mkdtemp(prefix="chrome-upd-", dir=os.path.join(ROOT, "build"))
+    proc, ws = cdp.launch(debug_port, profile)
     ui = UI(ws)
     try:
         ws.call("Page.enable")
@@ -181,31 +205,38 @@ def main():
 
         st = ui.state()
         check("标题为「引擎更新」", st["title"] == "引擎更新", st["title"])
-        check("显示 旧版 → 新版", st["vers"][0] == "23.01" and st["vers"][1] == LATEST,
+        check("显示 旧版 → 新版", st["vers"][0] == CURRENT and st["vers"][1] == LATEST,
               " → ".join(st["vers"]))
         check("写明发布日期与版本跨度",
-              "发布于" in st["meta"] and "个版本" in st["meta"], st["meta"])
-        check("统计了安全修复数量", "安全修复" in st["meta"], st["meta"])
-        # 每条亮点一个类型：小版本可能只有 2 类，所以断言「不重复」而不是「恰好 5 条」。
+              "发布于" in st["meta"] and (len(expected) == 1 or
+              f"跨越 {len(expected)} 个版本" in st["meta"]), st["meta"])
+        security = updates._security_count(history, CURRENT, LATEST)
+        check("统计了安全修复数量", (f"{security} 项安全修复" in st["meta"])
+              if security else "安全修复" not in st["meta"], st["meta"])
         check("亮点每种类型各一条", 2 <= len(st["highlights"]) <= 5
               and len({h["tag"] for h in st["highlights"]}) == len(st["highlights"]),
               str([h["tag"] for h in st["highlights"]]))
         check("亮点文字是中文",
               all(any("\u4e00" <= ch <= "\u9fff" for ch in h["text"]) for h in st["highlights"]))
-        check("逐版本清单覆盖全部跨越版本", st["rows"] >= 13, f"{st['rows']} 行")
-        def _v(x):
-            return tuple(int(p) for p in x.split("."))
-        check("清单按新到旧排列",
-              st["rowVers"][0] == LATEST
-              and st["rowVers"] == sorted(st["rowVers"], key=_v, reverse=True),
-              f"{st['rowVers'][0]} … {st['rowVers'][-1]}")
+        check("逐版本清单覆盖全部跨越版本", st["rows"] == len(expected),
+              f"实际 {st['rows']} 行 · fetch_history 预期 {len(expected)} 行")
+        check("清单按新到旧排列", st["rowVers"] == expected, str(st["rowVers"]))
         check("英文条目都标注为「官方原文」", st["englishRows"] == st["enNoted"],
               f"英文行 {st['englishRows']} · 已标注 {st['enNoted']}")
         check("底部按钮齐备",
               st["foot"] == ["跳过此版本", "稍后", "下载并更新"], str(st["foot"]))
         check("面板宽度 560 且完整落在窗口内",
               st["width"] == 560 and st["inView"], f"w={st['width']} inView={st['inView']}")
-        check("长清单在面板内滚动", st["scrolls"])
+        if len(expected) >= 13:
+            check("长清单在面板内滚动", st["scrolls"])
+            before = ui.js("document.querySelector('.sheet.upd .sheet-body').scrollTop")
+            box = ui.js("(() => {const r=document.querySelector('.sheet.upd .sheet-body').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+            ws.call("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": box[0],
+                    "y": box[1], "deltaX": 0, "deltaY": 500})
+            time.sleep(.4)
+            check("真实滚轮移动长清单", ui.js("document.querySelector('.sheet.upd .sheet-body').scrollTop") > before)
+        else:
+            print(f"  skip  长清单滚动 skip（跨度 {len(expected)} 行）")
         check("说明里写明安装位置不影响应用",
               "Application Support" in st["hint"] and "不会修改应用本身" in st["hint"])
 
@@ -305,7 +336,7 @@ def main():
         check("下载完成后提示已更新", "已更新到" in (p.get("msg") or ""), p.get("msg"))
         check("进度条到 100%", p.get("width", "").startswith("100"), p.get("width"))
         meta = api(port, token, "/meta")["engine"]
-        check("引擎版本已切换", meta["engineVersion"] == "26.04",
+        check("引擎版本已切换", meta["engineVersion"] == LATEST,
               f"{meta['engineVersion']} · {meta['engineSource']}")
         check("标记为应用外安装", meta["engineSource"] == "user", meta["engineSource"])
         cdp.shoot(ws, os.path.join(SHOTS, "09-update-done.png"))
@@ -314,7 +345,7 @@ def main():
         time.sleep(1.2)
         check("完成后关闭对话框", not ui.js("!!document.querySelector('.sheet.upd')"))
         check("侧栏显示新版本",
-              "26.04" in ui.js("document.querySelector('#engine-ver').textContent"),
+              LATEST in ui.js("document.querySelector('#engine-ver').textContent"),
               ui.js("document.querySelector('#engine-ver').textContent"))
 
         # --------------------------------------------- 6. and it still compresses
@@ -324,6 +355,8 @@ def main():
         with open(src, "wb") as fh:
             fh.write(os.urandom(120_000))
         out = os.path.join(demo, "after-update.7z")
+        if os.path.exists(out):
+            os.unlink(out)
         r = api(port, token, "/compress", {
             "inputs": [src], "destDir": demo, "name": "after-update",
             "format": "7z", "level": 3, "method": "auto",
@@ -342,7 +375,7 @@ def main():
 
         # -------------------------------------------------- 7. back to built-in
         r = api(port, token, "/engine/reset", {})
-        check("可恢复内置引擎", r["engine"]["engineVersion"] == "23.01",
+        check("可恢复内置引擎", r["engine"]["engineVersion"] == CURRENT,
               r["engine"]["engineVersion"])
     finally:
         finish(proc, ws)
@@ -355,6 +388,7 @@ def finish(proc, ws):
         pass
     try:
         proc.terminate()
+        proc.wait(timeout=10)
     except Exception:
         pass
     print("\n通过 %d   失败 %d" % (len(PASS), len(FAIL)))

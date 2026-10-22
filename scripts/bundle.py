@@ -52,7 +52,7 @@ SKIP_FILES = {"turtle.py", "turtledemo.py", "this.py"}
 # only what the app actually imports from site-packages
 SITE_WHITELIST = {
     "objc", "AppKit", "Cocoa", "Foundation", "CoreFoundation", "WebKit",
-    "JavaScriptCore", "UniformTypeIdentifiers", "PyObjCTools",
+    "JavaScriptCore", "UniformTypeIdentifiers", "PyObjCTools", "Security", "LocalAuthentication",
 }
 
 
@@ -260,7 +260,7 @@ def smoke_test():
     env["PYTHONHOME"] = os.path.join(BUNDLE, "Contents", "Resources", "python")
     env["PYTHONPATH"] = os.path.join(BUNDLE, "Contents", "Resources", "app")
     env.pop("PYTHONSTARTUP", None)
-    r = subprocess.run([py, "-c", "import objc, AppKit, WebKit, sys;print(sys.version.split()[0], 'ok')"],
+    r = subprocess.run([py, "-c", "import objc, AppKit, WebKit, Security, LocalAuthentication, sys;print(sys.version.split()[0], 'ok')"],
                        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     log("  runtime: " + r.stdout.decode("utf-8", "replace").strip())
     if r.returncode != 0:

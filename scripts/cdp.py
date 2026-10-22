@@ -108,6 +108,8 @@ class WS:
 
 def launch(port: int, profile: str, size=(1120, 764), scale=2):
     os.makedirs(profile, exist_ok=True)
+    import pwd
+    env = dict(os.environ, HOME=pwd.getpwuid(os.getuid()).pw_dir)
     proc = subprocess.Popen(
         [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
          f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
@@ -115,7 +117,7 @@ def launch(port: int, profile: str, size=(1120, 764), scale=2):
          f"--force-device-scale-factor={scale}",
          "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
          "--disable-crash-reporter", "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     ws_url = None
     for _ in range(80):
         try:

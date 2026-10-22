@@ -5,6 +5,7 @@ Run with the project venv against a headless instance:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -180,7 +181,11 @@ def luminance(text: str) -> float:
 
 
 def main():
-    ports = json.load(open(os.path.join(ROOT, "build", "port-menu.json")))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port-file", default=os.path.join(ROOT, "build", "port-menu.json"))
+    args = parser.parse_args()
+    with open(args.port_file) as handle:
+        ports = json.load(handle)
     port, token = ports["port"], ports["token"]
     orig_theme = api(port, token, "/meta")["settings"].get("appearance") or "system"
     # The engine-update dialog opens by itself on launch when a newer 7-Zip

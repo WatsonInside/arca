@@ -422,15 +422,25 @@ def main():
     r = cli.call("/api/components/reset", {"id": "7zz"}, expect_ok=False)
     check("7zz 的恢复内置走引擎重置", r.get("ok") is True and bool(r.get("engine")),
           str(r.get("error", "")))
-    chk = cli.get("/api/components/check?id=zstd", expect_ok=False)
+    from unittest.mock import patch
+    from arca import components, util
+    release = [{"tag_name": "v1.5.7", "body": "Controlled test release notes.",
+                "published_at": "2026-10-22T00:00:00Z",
+                "html_url": "https://github.com/facebook/zstd/releases/tag/v1.5.7"}]
+    def fetch_release(url, timeout=25):
+        assert url == "https://api.github.com/repos/facebook/zstd/releases?per_page=8", url
+        return release
+    cache_path = util.state_path("remote-zstd.json")
+    if os.path.exists(cache_path):
+        os.unlink(cache_path)
+    print("      zstd: 本地受控发布 fixture；真实 GitHub 解析器与 HTTP API")
+    with patch.object(components, "_fetch_json", fetch_release):
+        chk = cli.get("/api/components/check?id=zstd", expect_ok=False)
     upd = chk.get("update") or {}
-    if chk.get("ok") and upd.get("ok"):
-        check("zstd 远程版本可读", bool(upd.get("latest") or upd.get("current")),
-              str(upd.get("latest") or upd.get("current")))
-        check("check 返回 available 布尔", isinstance(upd.get("available"), bool),
-              f'available={upd.get("available")}')
-    else:
-        skip("zstd 远程版本", (chk.get("error") or upd.get("error") or "网络不可达"))
+    check("zstd 远程版本可读", chk.get("ok") and upd.get("ok")
+          and upd.get("latest") == "1.5.7", str(upd))
+    check("check 返回 available 布尔", isinstance(upd.get("available"), bool),
+          f'available={upd.get("available")}')
 
     print("\n" + "-" * 62)
     print(f"通过 {len(PASS)} · 失败 {len(FAIL)} · 跳过 {len(SKIP)}")
