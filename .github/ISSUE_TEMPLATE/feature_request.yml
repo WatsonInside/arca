@@ -1,0 +1,26 @@
+name: 功能建议
+description: 提议新功能或对现有行为的改进
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 先说场景和痛点，而不是直接给方案——同一痛点可能有更简单的解法
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你期望的行为
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你考虑过的替代方案 / 现有软件是怎么做的
+  - type: markdown
+    attributes:
+      value: |
+        评估维度：必要性、与现有架构的兼容性、改进价值。维护者会逐条给出
+        采纳 / 有条件采纳 / 拒绝的理由，请勿因未立即回应而重复提交。
