@@ -396,8 +396,18 @@ def make_extract_task(mgr: JobManager, opts: dict):
         dest = opts["dest"]
         fresh = not os.path.isdir(dest)          # did we create this folder?
         os.makedirs(dest, exist_ok=True)
+
+        def guarded(run):
+            # 失败与取消同策：只删除本次新建的目标目录——半成品或空壳留在
+            # 原地会挡住「重试」（重试会因同名文件夹被拒）。
+            try:
+                return run()
+            except Exception:
+                _rollback_extract(dest, fresh)
+                raise
+
         if zst.is_zstd(entry):
-            return _extract_zstd(job, mgr, entry, dest, opts)
+            return guarded(lambda: _extract_zstd(job, mgr, entry, dest, opts))
 
         # A Windows-made ZIP stores GBK names without the UTF-8 flag; 7-Zip
         # turns them into private-use characters.  Decode the directory
@@ -409,7 +419,7 @@ def make_extract_task(mgr: JobManager, opts: dict):
             except OSError:
                 plan = None
         if plan:
-            return _extract_zipfix(job, entry, dest, opts, plan, fresh)
+            return guarded(lambda: _extract_zipfix(job, entry, dest, opts, plan, fresh))
 
         cmd = mgr.engine.build_extract_cmd({**opts, "archive": entry})
         total = int(opts.get("totalBytes") or 0)
@@ -429,6 +439,7 @@ def make_extract_task(mgr: JobManager, opts: dict):
             _rollback_extract(dest, fresh)
             raise RuntimeError("已取消")
         if code not in (0, 1):
+            _rollback_extract(dest, fresh)
             raise eng.EngineError(eng.describe_error(log, code) or "解压失败")
         written = max(0, _count_files(dest) - before)
         job.update(outputs=[dest], destPath=dest, srcPath=entry,

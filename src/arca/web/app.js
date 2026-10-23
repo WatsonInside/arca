@@ -695,7 +695,17 @@ function jobSub(job) {
     if (job.destPath) bits.push(midEllipsis(shortPath(job.destPath), 46));
     return bits.map((b) => esc(b)).join('<span class="sep">·</span>');
   }
-  if (job.status === 'error') return `<span style="color:var(--err)">${esc(job.error || '失败')}</span>`;
+  if (job.status === 'error') {
+    // 一句可理解的原因放主行；长错误收进可聚焦的「详情」，不铺满卡片。
+    const raw = String(job.error || '失败');
+    const short = raw.length > 72 ? raw.slice(0, 72) + '…' : raw;
+    const detail = raw.length > 72 || job.srcPath || job.destPath
+      ? `<details class="job-err"><summary tabindex="0" aria-label="展开任务详情">详情</summary>`
+        + `<div>${esc(raw)}${job.srcPath ? `<br>来源：${esc(job.srcPath)}` : ''}`
+        + `${job.destPath ? `<br>输出：${esc(job.destPath)}` : ''}</div></details>`
+      : '';
+    return `<span style="color:var(--err)">${esc(short)}</span>${detail}`;
+  }
   return '已取消';
 }
 
@@ -708,16 +718,19 @@ const QNODES = new Map();          // job id -> card element
 function jobActions(job) {
   const actions = [];
   if (job.status === 'running' || job.status === 'queued') {
-    actions.push(`<button class="icon-btn" data-cancel="${job.id}" title="取消">${icon('i-stop')}</button>`);
+    actions.push(`<button class="icon-btn" data-cancel="${job.id}" title="取消任务（已写出的文件会保留）" aria-label="取消任务，已写出的文件会保留">${icon('i-stop')}</button>`);
+  }
+  if (job.status === 'error') {
+    actions.push(`<button class="btn ghost" data-retry="${job.id}" aria-label="重试这个任务">重试</button>`);
   }
   if (job.status === 'done') {
-    actions.push(`<button class="icon-btn" data-reveal="${esc(job.outputs[0] || job.destPath || '')}" title="在 Finder 中显示">${icon('i-reveal')}</button>`);
+    actions.push(`<button class="icon-btn" data-reveal="${esc(job.outputs[0] || job.destPath || '')}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>`);
     if (job.kind !== 'test' && job.outputs[0]) {
-      actions.push(`<button class="icon-btn" data-open="${esc(job.outputs[0])}" title="打开">${icon('i-external')}</button>`);
+      actions.push(`<button class="icon-btn" data-open="${esc(job.outputs[0])}" title="打开" aria-label="打开">${icon('i-external')}</button>`);
     }
   }
   if (job.status !== 'running' && job.status !== 'queued') {
-    actions.push(`<button class="icon-btn" data-remove="${job.id}" title="移除">${icon('i-x')}</button>`);
+    actions.push(`<button class="icon-btn" data-remove="${job.id}" title="从列表移除" aria-label="从列表移除，不删除磁盘文件">${icon('i-x')}</button>`);
   }
   return actions;
 }
@@ -774,10 +787,16 @@ function patchJobEl(el, job) {
   }
 
   const bar = el.querySelector('.bar');
-  bar.classList.toggle('indet', job.status === 'running' && pct < 1);
-  bar.querySelector('i').style.width = `${pct}%`;
-  bar.setAttribute('aria-valuenow', String(Math.round(pct)));
-  bar.setAttribute('aria-valuetext', pctText);
+  // 结束态收起贯穿整行的进度条：完成不再是满宽绿条，失败/取消同理，
+  // 状态由文字与图标承载（详见任务书 §5.3「收起长进度条」）。
+  const finished = job.status === 'done' || job.status === 'error' || job.status === 'canceled';
+  bar.classList.toggle('hidden', finished);
+  if (!finished) {
+    bar.classList.toggle('indet', job.status === 'running' && pct < 1);
+    bar.querySelector('i').style.width = `${pct}%`;
+    bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+    bar.setAttribute('aria-valuetext', pctText);
+  }
   bar.setAttribute('aria-label', job.title);
 
   const box = el.querySelector('.job-actions');
@@ -830,8 +849,11 @@ function renderQueue() {
   $('#q-title').textContent = active ? '进行中'
     : (jobs.length || state.history.length) ? '最近任务' : '任务';
   // Clearing also drops persisted history, so name the action after the rows on
-  // screen.
-  $('#q-clear').textContent = (!jobs.length && state.history.length) ? '清除历史' : '清理已完成';
+  // screen. An armed confirm label must survive the next poll repaint.
+  const clearBtn = $('#q-clear');
+  if (!clearBtn.dataset.armed) {
+    clearBtn.textContent = (!jobs.length && state.history.length) ? '清除历史' : '清理已完成';
+  }
   $('#nav-count').classList.toggle('hidden', active === 0);
   $('#nav-count').textContent = String(active);
 
@@ -846,7 +868,10 @@ function renderQueue() {
     list.dataset.historySig = '';
   }
   const seen = new Set();
-  queueNodeSync(jobs, list, seen);
+  // 面板秩序（§5.3）：进行中、等待在最上，失败其次，完成沉底——已完成的
+  // 任务不再抢占注意力。稳定排序保持同组内的队列顺序。
+  const RANK = { running: 0, queued: 1, error: 2, canceled: 3, done: 4 };
+  queueNodeSync([...jobs].sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9)), list, seen);
 }
 
 function queueNodeSync(jobs, list, seen) {
@@ -2852,6 +2877,18 @@ function wireEvents() {
 
   // queue
   $('#q-list').addEventListener('click', async (e) => {
+    const retry = e.target.closest('[data-retry]');
+    if (retry) {
+      retry.disabled = true;
+      try {
+        await api('/jobs/retry', { id: retry.dataset.retry });
+        refreshJobsNow();
+      } catch (err) {
+        toast(err.message, 'err');
+        retry.disabled = false;
+      }
+      return;
+    }
     const cancel = e.target.closest('[data-cancel]');
     const remove = e.target.closest('[data-remove]');
     const reveal = e.target.closest('[data-reveal]');
@@ -2861,9 +2898,41 @@ function wireEvents() {
     if (reveal && reveal.dataset.reveal) native('reveal', { path: reveal.dataset.reveal });
     if (open && open.dataset.open) native('open', { path: open.dataset.open });
   });
-  $('#q-clear').addEventListener('click', async () => { await api('/jobs/clear', {}); refreshJobsNow(); });
+  // 清理动作先说清范围（§5.3）：清历史要二次确认并写明条数与「文件不受影响」；
+  // 有已完成任务在屏时直接清卡片，但完成后用 toast 披露实际清了什么。
+  const qClear = $('#q-clear');
+  let qClearTimer = null;
+  qClear.addEventListener('click', async () => {
+    const historyOnly = !state.jobs.length && state.history.length > 0;
+    if (historyOnly && qClear.dataset.armed !== '1') {
+      qClear.dataset.armed = '1';
+      qClear.dataset.label = qClear.textContent;
+      qClear.textContent = `确认清除 ${state.history.length} 条历史？文件不受影响`;
+      qClearTimer = setTimeout(() => {
+        delete qClear.dataset.armed;
+        qClear.textContent = qClear.dataset.label || '清除历史';
+      }, 3500);
+      return;
+    }
+    clearTimeout(qClearTimer);
+    delete qClear.dataset.armed;
+    const jobsOnScreen = state.jobs.filter((j) => j.status !== 'queued' && j.status !== 'running').length;
+    const historyCount = state.history.length;
+    await api('/jobs/clear', {});
+    if (historyOnly) {
+      toast(`已清除 ${historyCount} 条历史 · 输出文件未动`, 'ok');
+    } else if (jobsOnScreen || historyCount) {
+      const parts = [];
+      if (jobsOnScreen) parts.push(`${jobsOnScreen} 个已完成任务`);
+      if (historyCount) parts.push(`${historyCount} 条历史`);
+      toast(`已清理 ${parts.join('与')} · 输出文件未动`, 'ok');
+    }
+    refreshJobsNow();
+  });
   const qEmptyGo = $('#q-empty-go');
   if (qEmptyGo) qEmptyGo.addEventListener('click', () => setView('compress'));
+  const qEmptyPick = $('#q-empty-pick');
+  if (qEmptyPick) qEmptyPick.addEventListener('click', () => { setView('extract'); $('#x-pick').click(); });
 
   // keyboard
   document.addEventListener('keydown', (e) => {

@@ -1321,3 +1321,27 @@ table.entries .dir { color: var(--accent); }
   color: var(--ink-2);
 }
 .stats-notice .sn-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* ---- failed job detail expander ------------------------------------------ */
+.job-err { display: inline-block; margin-left: 8px; }
+.job-err summary {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.job-err summary:hover { color: var(--ink); background: var(--surface-3); }
+.job-err summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.job-err div {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 52ch;
+  overflow-wrap: anywhere;
+}

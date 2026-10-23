@@ -66,6 +66,9 @@ class AppContext:
         self.window = None
         self.bridge = None
         self.headless = False
+        # job id -> {path, body}: server-side only (passwords never go back
+        # to the frontend), dropped on restart, powers /api/jobs/retry.
+        self.requests = {}
         self.inspect_cache: dict[str, dict] = {}
         self.inspect_lock = threading.RLock()
         self.installer = None          # updates.Installer while one is running
@@ -281,6 +284,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._test(body)
             if path == "/api/preflight":
                 return self._preflight(body)
+            if path == "/api/jobs/retry":
+                jid = str(body.get("id") or "")
+                record = getattr(ctx, "requests", {}).get(jid)
+                if not record:
+                    return self._err("重试信息已失效（应用重启后仅保留本次会话的任务）")
+                job = ctx.manager.jobs.get(jid)
+                if job is not None and job.to_dict()["status"] not in ("error", "canceled"):
+                    return self._err("只有失败或已取消的任务可以重试")
+                payload = dict(record["body"])
+                # 失败重试时目标目录若被用户占用，合并进同名目录继续，
+                # 而不是弹“已存在同名文件夹”把重试堵死。
+                payload.setdefault("onExists", "merge")
+                ctx.requests.pop(jid, None)
+                if record["path"] == "/api/compress":
+                    return self._compress(payload)
+                if record["path"] == "/api/extract":
+                    return self._extract(payload)
+                return self._test(payload)
             if path == "/api/settings":
                 if body.get("clearSavedPasswords") is True:
                     if not ctx.saved_passwords.clear_all():
@@ -586,6 +607,15 @@ class Handler(BaseHTTPRequestHandler):
             index += 1
         return candidate
 
+    def _record_retry(self, jid, path, body):
+        # Best-effort bookkeeping: unit tests build fake contexts without it.
+        requests = getattr(self.ctx, "requests", None)
+        if requests is None:
+            return
+        requests[jid] = {"path": path, "body": dict(body)}
+        while len(requests) > 60:
+            requests.pop(next(iter(requests)), None)
+
     def _compress(self, body):
         inputs = [os.path.expanduser(p) for p in (body.get("inputs") or []) if p]
         missing = [p for p in inputs if not os.path.exists(p)]
@@ -662,6 +692,7 @@ class Handler(BaseHTTPRequestHandler):
                 task(job)
             self.ctx.manager._targets[job.id] = os.path.realpath(target)
             self.ctx.manager.submit(job, prepared)
+            self._record_retry(job.id, "/api/compress", body)
         return self._json({"ok": True, "job": job.to_dict(), "target": target,
                            "encrypted": bool(pw),
                            "par2": opts["par2Percent"],
@@ -733,6 +764,7 @@ class Handler(BaseHTTPRequestHandler):
                           if body.get("remember") is True else False)
             self.ctx.manager._targets[job.id] = os.path.realpath(dest)
             self.ctx.manager.submit(job, jobs_mod.make_extract_task(self.ctx.manager, opts))
+            self._record_retry(job.id, "/api/extract", body)
         return self._json({"ok": True, "job": job.to_dict(), "dest": dest,
                            "savedPasswordUsed": saved, "passwordRemembered": remembered})
 
@@ -749,6 +781,7 @@ class Handler(BaseHTTPRequestHandler):
                       if body.get("remember") is True else False)
         self.ctx.manager.submit(
             job, jobs_mod.make_test_task(self.ctx.manager, entry, password))
+        self._record_retry(job.id, "/api/test", body)
         return self._json({"ok": True, "job": job.to_dict(),
                            "savedPasswordUsed": saved, "passwordRemembered": remembered})
 
