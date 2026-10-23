@@ -12,3 +12,7 @@ __pycache__/
 gh-token.tmp
 gh-device.json
 /.workbuddy/
+
+# Python bytecode
+__pycache__/
+*.pyc
