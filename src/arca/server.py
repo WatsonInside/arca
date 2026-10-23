@@ -35,16 +35,16 @@ MIME = {
 
 FORMATS = [
     {"id": "7z", "label": "7Z", "ext": ".7z", "create": True,
-     "hint": "压缩率最高 · 可加密文件名",
+     "hint": "通常体积最小，适合长期保存 · 可加密文件名",
      "encrypt": True, "split": True, "method": True, "solid": True},
     {"id": "zip", "label": "ZIP", "ext": ".zip", "create": True,
-     "hint": "兼容性最好 · 全平台可解",
+     "hint": "兼容性最好，适合发给别人",
      "encrypt": True, "split": True, "method": False, "solid": False},
     {"id": "tar.zst", "label": "ZST", "ext": ".tar.zst", "create": True,
-     "hint": "速度最快 · 不支持加密与分卷",
+     "hint": "适合大文件与高速压缩 · 不支持密码与分卷",
      "encrypt": False, "split": False, "method": False, "solid": False},
     {"id": "rar", "label": "RAR", "ext": ".rar", "create": False,
-     "hint": "解压可用 · 创建需 WinRAR 命令行",
+     "hint": "可解压 · 创建需配置 WinRAR",
      "encrypt": True, "split": True, "method": False, "solid": False},
 ]
 

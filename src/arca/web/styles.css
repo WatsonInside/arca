@@ -9,8 +9,9 @@
   /* Content column cap: the widest the form/queue should ever get. */
   --col: 880px;
   --bg: #f2f3f7;
-  --bg-glow-1: rgba(109, 109, 248, 0.16);
-  --bg-glow-2: rgba(56, 189, 248, 0.14);
+  /* 氛围光只做背景存在感，不与文字争注意力（§8.1 收敛过一次） */
+  --bg-glow-1: rgba(109, 109, 248, 0.09);
+  --bg-glow-2: rgba(56, 189, 248, 0.08);
   --rail: rgba(255, 255, 255, 0.62);
   --surface: #ffffff;
   --surface-2: #f6f7fa;
@@ -58,8 +59,8 @@
 [data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b0c10;
-  --bg-glow-1: rgba(109, 109, 248, 0.2);
-  --bg-glow-2: rgba(34, 211, 238, 0.1);
+  --bg-glow-1: rgba(109, 109, 248, 0.12);
+  --bg-glow-2: rgba(34, 211, 238, 0.06);
   --rail: rgba(22, 23, 29, 0.6);
   --surface: #16171d;
   --surface-2: #1b1d24;

@@ -170,10 +170,15 @@
         <div class="drop" id="drop-c" tabindex="0" role="button" aria-label="添加要压缩的文件">
           <div class="drop-icon"><svg><use href="#i-compress"/></svg></div>
           <h3>把文件或文件夹拖到这里</h3>
-          <p>也可以点按选择，或按 ⌘O</p>
-          <button class="btn ghost" id="c-pick">
-            <svg><use href="#i-plus"/></svg>选择文件
-          </button>
+          <p>也可以点按选择；压缩前还能调整格式和保存位置</p>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button class="btn ghost" id="c-pick">
+              <svg><use href="#i-plus"/></svg>选择文件…
+            </button>
+            <button class="btn ghost" id="c-pick-dir">
+              <svg><use href="#i-folder"/></svg>选择文件夹…
+            </button>
+          </div>
         </div>
 
         <div class="card hidden" id="c-files">
@@ -182,7 +187,7 @@
             <span class="meta" id="c-meta">0 项</span>
             <span class="spacer"></span>
             <button class="btn quiet" id="c-add"><svg><use href="#i-plus"/></svg>添加</button>
-            <button class="btn quiet" id="c-clear">清空</button>
+            <button class="btn quiet" id="c-clear" title="只清空列表，不删除磁盘文件">清空列表</button>
           </div>
           <div class="file-list" id="c-list"></div>
         </div>
@@ -331,10 +336,10 @@
       <section class="view" id="view-extract">
         <div class="drop" id="drop-x" tabindex="0" role="button" aria-label="选择压缩包">
           <div class="drop-icon"><svg><use href="#i-extract"/></svg></div>
-          <h3>把压缩包拖到这里</h3>
-          <p>支持 ZIP · 7Z · RAR（含分卷）</p>
+          <h3>选择一个压缩包</h3>
+          <p>先查看内容，再决定解压到哪里</p>
           <button class="btn ghost" id="x-pick">
-            <svg><use href="#i-plus"/></svg>选择压缩包
+            <svg><use href="#i-plus"/></svg>选择压缩包…
           </button>
         </div>
 
@@ -404,11 +409,13 @@
               <div class="opt-row" style="border-bottom:0">
                 <label for="x-over">重名文件</label>
                 <div class="opt-field">
-                  <select class="select" id="x-over" style="min-width:150px">
-                    <option value="rename">自动重命名（推荐）</option>
-                    <option value="overwrite">直接覆盖</option>
+                  <select class="select" id="x-over" style="min-width:150px"
+                          aria-describedby="x-over-hint">
+                    <option value="rename">自动改名（推荐）</option>
+                    <option value="overwrite">覆盖旧文件</option>
                     <option value="skip">跳过已存在</option>
                   </select>
+                  <span class="opt-hint" id="x-over-hint" role="status" aria-live="polite"></span>
                 </div>
               </div>
             </div>

@@ -350,16 +350,20 @@ function renderCompress() {
   if (has) {
     const total = cTotalSize();
     const dirs = c.items.filter((i) => i.isDir).length;
-    $('#c-meta').textContent = `${c.items.length} 项${total ? ' · ' + fmtSize(total) : ''}${dirs && !total ? ' · 含文件夹' : ''}`;
+    const files = c.items.length - dirs;
+    // 项数、文件数、文件夹数、总大小一并给出（§5.1），大小未知时落"—"。
+    $('#c-meta').textContent = `${c.items.length} 项 · ${files} 个文件 · ${dirs} 个文件夹`
+      + (total ? ` · ${fmtSize(total)}` : c.items.every((i) => !i.isDir) ? '' : ' · 大小待扫描');
     $('#c-list').innerHTML = c.items.map((it, idx) => `
       <div class="file-row" data-idx="${idx}" style="animation-delay:${Math.min(idx, 6) * 18}ms">
         <div class="file-ico ${it.isDir ? 'folder' : ''}">${icon(it.isDir ? 'i-folder' : 'i-file')}</div>
         <div class="file-main">
-          <b>${esc(it.name)}</b>
+          <b title="${esc(it.name)}">${esc(midEllipsis(it.name, 52))}</b>
           <small>${esc(midEllipsis(shortPath(it.dir), 44))}</small>
         </div>
         <span class="file-size">${it.isDir ? '文件夹' : fmtSize(it.size)}</span>
-        <button class="file-x" data-remove="${idx}" title="移除">${icon('i-x')}</button>
+        <button class="file-x" data-remove="${idx}" title="从列表移除"
+                aria-label="从列表移除 ${esc(it.name)}，不删除磁盘文件">${icon('i-x')}</button>
       </div>`).join('');
   } else {
     // Leaving the old rows behind made the list reachable to anything still
@@ -563,6 +567,12 @@ const refreshTarget = debounce(async () => {
 }, 220);
 
 /* ---------------------------------------------------------------- extract UI */
+function overHintText(mode) {
+  if (mode === 'overwrite') return '同名旧文件会被替换';
+  if (mode === 'skip') return '保留旧文件，对应的新文件不写入';
+  return '保留旧文件，新解出的文件自动换名写入';
+}
+
 function renderExtract() {
   const x = state.x;
   const panel = $('#x-panel');
@@ -622,6 +632,7 @@ function renderExtract() {
     $('#x-dest-text').textContent = x.dest ? midEllipsis(shortPath(x.dest), 34) : '与压缩包同目录';
     $('#x-folder').setAttribute('aria-checked', String(x.autoFolder));
     $('#x-over').value = x.overwrite;
+    $('#x-over-hint').textContent = overHintText(x.overwrite);
     $('#x-outpath').textContent = midEllipsis(shortPath(finalDest()), 56);
     $('#x-outhint').textContent = x.pw ? '将用输入的密码解压' : '先输入密码，再开始解压';
     return;
@@ -649,6 +660,7 @@ function renderExtract() {
   $('#x-dest-text').textContent = x.dest ? midEllipsis(shortPath(x.dest), 34) : '与压缩包同目录';
   $('#x-folder').setAttribute('aria-checked', String(x.autoFolder));
   $('#x-over').value = x.overwrite;
+  $('#x-over-hint').textContent = overHintText(x.overwrite);
   $('#x-start').disabled = !!x.error;
   const dest = finalDest('display');
   $('#x-outpath').textContent = midEllipsis(shortPath(dest), 56);
@@ -1007,9 +1019,16 @@ async function addToCompress(paths) {
   if (!paths.length) return;
   const existing = new Set(state.c.items.map((i) => i.path));
   const fresh = paths.filter((p) => !existing.has(p));
+  const dup = paths.length - fresh.length;
+  // 重复添加不再静默（§5.1）：明确告诉用户哪些没进来、为什么。
+  if (dup > 0 && !fresh.length) {
+    toast(`${paths.length === 1 ? '这个文件' : `这 ${dup} 个文件`}已在列表中`, 'info');
+    return;
+  }
   const stats = (await Promise.all(fresh.map(statPath))).filter(Boolean);
   if (!stats.length) return;
   state.c.items.push(...stats);
+  if (dup > 0) toast(`已添加 ${stats.length} 项 · ${dup} 项已在列表中`, 'ok');
   if (!state.c.touchedName) state.c.name = defaultArchiveName();
   if (!state.c.dest) {
     const dirs = new Set(stats.map((s) => s.dir));
@@ -2696,6 +2715,7 @@ function wireEvents() {
 
   // compress
   $('#c-pick').addEventListener('click', async (e) => { e.stopPropagation(); await addToCompress(await pick('files', { multiple: true, prompt: '添加' })); });
+  $('#c-pick-dir').addEventListener('click', async (e) => { e.stopPropagation(); await addToCompress(await pick('folder', { multiple: true, prompt: '添加' })); });
   $('#c-add').addEventListener('click', async () => addToCompress(await pick('files', { multiple: true, prompt: '添加' })));
   $('#drop-c').addEventListener('click', async () => addToCompress(await pick('files', { multiple: true, prompt: '添加' })));
   $('#drop-c').addEventListener('keydown', async (e) => {
@@ -2739,6 +2759,9 @@ function wireEvents() {
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
     $('#c-pw-eye').innerHTML = icon(show ? 'i-eye-off' : 'i-eye');
+    // 图标换了，读屏名称与提示也要跟着换（§5.2）。
+    $('#c-pw-eye').setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    $('#c-pw-eye').title = show ? '隐藏密码' : '显示密码';
   });
   $('#c-pw-gen').addEventListener('click', () => {
     const pw = genPassword();
@@ -2746,6 +2769,8 @@ function wireEvents() {
     $('#c-pw').type = 'text';
     state.c.pw = pw;
     $('#c-pw-eye').innerHTML = icon('i-eye-off');
+    $('#c-pw-eye').setAttribute('aria-label', '隐藏密码');
+    $('#c-pw-eye').title = '隐藏密码';
     refreshCompressPasswordHint();
     $('#c-names-row').classList.toggle('hidden', !(state.c.pw && state.c.format !== 'zip'));
     $('#c-outhint').textContent = buildOutHint();
@@ -2855,6 +2880,8 @@ function wireEvents() {
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
     $('#x-pw-eye').innerHTML = icon(show ? 'i-eye-off' : 'i-eye');
+    $('#x-pw-eye').setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    $('#x-pw-eye').title = show ? '隐藏密码' : '显示密码';
   });
   $('#x-verify').addEventListener('click', verifyPassword);
   $('#x-dest').addEventListener('click', async () => {
@@ -2958,6 +2985,14 @@ async function verifyPassword() {
   const btn = $('#x-verify');
   btn.disabled = true;
   btn.textContent = '校验中';
+  const fail = (message) => {
+    state.x.error = message;
+    renderExtract();
+    // 密码错误后留在输入框里并全选，立刻重输不用再点一次（§5.2）。
+    const box = $('#x-pw');
+    box.focus();
+    box.select();
+  };
   try {
     const r = await api('/inspect', { path: x.path, password: x.pw });
     const info = r.info || {};
@@ -2965,17 +3000,16 @@ async function verifyPassword() {
     // "needsPassword" payload as no password at all -- that is a failure,
     // not a success with an empty listing.
     if (info.needsPassword && !(info.entries || []).length) {
-      state.x.error = '密码不正确，或该文件已损坏';
-      renderExtract();
+      fail('密码不正确，或该文件已损坏');
       return;
     }
     state.x.info = info;
     state.x.error = '';
     toast('密码正确', 'ok');
     renderExtract();
+    $('#x-start').focus();
   } catch (err) {
-    state.x.error = err.message || '密码不正确，或该文件已损坏';
-    renderExtract();
+    fail(err.message || '密码不正确，或该文件已损坏');
   } finally {
     btn.disabled = false;
     btn.textContent = '验证';
