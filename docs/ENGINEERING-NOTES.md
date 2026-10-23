@@ -114,8 +114,8 @@
 
 界面截图见 `assets/shots/`（`01-compress` `02-extract` `03-queue` `04-dark` `05-settings`  
 `06-menu-light` `07-menu-dark` `08-update` `09-update-done` `10-zst` `11-par2-menu`  
-`12-components` `13-finder` `14-default` `15-par2-hint` `16-par2-note` `17-rar-entry`  
-`18-rar-jump`）。
+`12-components` `13-finder` `14-default`；01-07、10-14 由 `make shots` 生成，  
+08-09 由更新套件生成——目录里不再保留没有生成者的历史截图）。
 
 ### Finder 右键与默认打开方式
 
