@@ -2800,7 +2800,7 @@ function wireEvents() {
     $('#c-pw-eye').setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
     $('#c-pw-eye').title = show ? '隐藏密码' : '显示密码';
   });
-  $('#c-pw-gen').addEventListener('click', () => {
+  $('#c-pw-gen').addEventListener('click', async () => {
     const pw = genPassword();
     $('#c-pw').value = pw;
     $('#c-pw').type = 'text';
@@ -2811,6 +2811,16 @@ function wireEvents() {
     refreshCompressPasswordHint();
     $('#c-names-row').classList.toggle('hidden', !(state.c.pw && state.c.format !== 'zip'));
     $('#c-outhint').textContent = buildOutHint();
+    // 生成的这一刻就是要把它存走的时刻：直接进剪贴板，省掉选中-拷贝。
+    const ok = await copyText(pw);
+    toast(ok ? '强密码已生成，并拷贝到剪贴板' : '强密码已生成', 'info', ok ? 'i-copy' : 'i-dice');
+  });
+  $('#c-pw-copy').addEventListener('click', async () => {
+    const pw = $('#c-pw').value;
+    if (!pw) { toast('密码为空', 'info'); return; }
+    const ok = await copyText(pw);
+    if (!ok) { toast('无法写入剪贴板', 'err'); return; }
+    toast('已拷贝密码', 'info', 'i-copy');
   });
   $('#c-names').addEventListener('click', (e) => {
     const next = e.currentTarget.getAttribute('aria-checked') !== 'true';

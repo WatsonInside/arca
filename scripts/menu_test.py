@@ -208,6 +208,12 @@ def main():
         ws.call("Emulation.setDeviceMetricsOverride", {
             "width": 1120, "height": 764, "deviceScaleFactor": 2, "mobile": False})
         ws.call("Page.navigate", {"url": f"http://127.0.0.1:{port}/index.html?t={token}"})
+        # 密码拷贝段落要读回剪贴板；headless Chrome 需显式授权（应用内
+        # WKWebView 走 native 桥，不受此影响）。
+        ws.call("Browser.grantPermissions", {
+            "permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"],
+            "origin": f"http://127.0.0.1:{port}"})
+        ws.call("Page.bringToFront", {})
         time.sleep(2.6)
         ui.js(HELPERS)
         # A known starting point: light theme, compress view, empty list.
@@ -290,6 +296,35 @@ def main():
         pw = ui.rect("#c-pw")
         ui.right_click(pw["cx"], pw["cy"])
         check("输入框内保留系统菜单", ui.menu() is None)
+
+        # ------------------------------------------------------ password copy
+        def clip_text():
+            return ui.js("navigator.clipboard.readText().catch(()=>'')")
+
+        def last_toast():
+            return ui.js("(()=>{const t=document.querySelectorAll('#toasts .toast:not(.out)');"
+                         "return t.length?t[t.length-1].textContent:''})()")
+
+        ws.call("Page.bringToFront", {})
+        ui.js("document.getElementById('c-pw-gen').click()")
+        time.sleep(0.5)
+        genpw = ui.js("document.getElementById('c-pw').value")
+        gtype = ui.js("document.getElementById('c-pw').type")
+        check("生成强密码并明文展示", len(genpw) == 16 and gtype == "text",
+              f"len={len(genpw)} type={gtype}")
+        t1 = last_toast()
+        check("生成即自动拷贝并提示", "拷贝" in (t1 or ""), t1)
+        check("剪贴板内容即生成的密码", clip_text() == genpw,
+              f"{clip_text()[:6]}… vs {genpw[:6]}…")
+        ui.js("document.getElementById('c-pw-copy').click()")
+        time.sleep(0.5)
+        t2 = last_toast()
+        check("拷贝按钮可再次拷贝", clip_text() == genpw and "已拷贝密码" in (t2 or ""),
+              f"{t2}")
+        # 还原字段（清空 + 点眼睛复位明文），后续段落从干净状态开始。
+        ui.js("(()=>{const el=document.getElementById('c-pw');"
+              "el.value='';el.dispatchEvent(new Event('input',{bubbles:true}));"
+              "document.getElementById('c-pw-eye').click();})()")
 
         # ------------------------------------------------------------ file rows
         ui.js(f"window.__dropPaths({json.dumps(files)})")
