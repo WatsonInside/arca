@@ -3,7 +3,7 @@
 
 PY := build/venv/bin/python -S -E
 
-.PHONY: setup thirdparty bundle package publish test test-fast audit shots brief
+.PHONY: setup thirdparty bundle package publish test test-fast audit shots brief stats
 
 # 给接手的 AI Agent 用：一条命令自述家门 + 健康检查
 brief:
@@ -12,6 +12,8 @@ brief:
 	@echo "================ 当前状态 ================"
 	@git log --oneline -3
 	@echo "未提交变更：$$(git status --porcelain | wc -l | tr -d ' ') 项"
+	@git diff --stat 2>/dev/null | tail -5
+	@echo "跨 Agent 工作记忆（请先读最新一篇）：.workbuddy/memory/ 下按日期命名的日志"
 	@echo "已安装版本：$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Arca.app/Contents/Info.plist 2>/dev/null || echo 未安装)"
 	@echo "================ 快速门禁 ================"
 	@node --check src/arca/web/app.js && echo "app.js 语法 OK"
@@ -47,3 +49,8 @@ audit:
 
 shots:
 	$(PY) scripts/shots.py
+
+# 匿名使用统计：拉 COS 访问日志 → 聚合 → 上传 stats.json 数据接口
+# （接口契约见 docs/STATS-API.md；凭据在 build/cos.json，--sample 可离线验证）
+stats:
+	$(PY) scripts/stats.py
