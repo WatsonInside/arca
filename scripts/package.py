@@ -298,9 +298,33 @@ def write_text(path, text):
         fh.write(text)
 
 
+def check_world_readable():
+    # pkg 安装属主变 root 且保留权限——任何 owner-only 文件都会让装好的 app
+    # 对用户不可读（1.0.9 实际翻车：内嵌 python 运行时全是 -rwx------）。
+    # 出包前把关：文件必须 o+r（可执行再 o+x），目录必须 o+rx。
+    bad = []
+    for root, dirs, files in os.walk(APP_PATH):
+        for name in dirs:
+            p = os.path.join(root, name)
+            m = os.stat(p).st_mode
+            if not (m & 0o005 == 0o005):
+                bad.append(f"{oct(m & 0o7777)} {p}")
+        for name in files:
+            p = os.path.join(root, name)
+            m = os.stat(p).st_mode
+            need = 0o004 | (0o001 if m & 0o100 else 0)
+            if not (m & need == need):
+                bad.append(f"{oct(m & 0o7777)} {p}")
+    if bad:
+        raise SystemExit("bundle has non-world-readable paths (run make bundle to "
+                         "normalize):\n" + "\n".join(bad[:10]) +
+                         (f"\n… and {len(bad) - 10} more" if len(bad) > 10 else ""))
+
+
 def main():
     if not os.path.isdir(APP_PATH):
         raise SystemExit("run scripts/build_app.py first")
+    check_world_readable()
     dmg, layout = make_dmg()
     pkg = make_pkg()
     for p in (dmg, pkg):

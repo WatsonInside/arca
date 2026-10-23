@@ -253,6 +253,22 @@ def build_plist(contents):
     log("· Info.plist")
 
 
+def normalize_modes():
+    # pkg 安装会把属主换成 root 并原样保留文件权限：bundle 里任何 owner-only
+    # 文件装完就成了「用户读不了、app 打不开」（dmg 拖装没这问题，Finder 把
+    # 属主交给用户）。内嵌 python 运行时进 bundle 时就是 -rwx------，统一摊平
+    # 为全局可读：目录 755，可执行 755，其余 644。
+    for root, dirs, files in os.walk(BUNDLE):
+        for name in dirs:
+            os.chmod(os.path.join(root, name), 0o755)
+        for name in files:
+            p = os.path.join(root, name)
+            if os.path.islink(p):
+                continue
+            os.chmod(p, 0o755 if os.stat(p).st_mode & 0o111 else 0o644)
+    os.chmod(BUNDLE, 0o755)
+
+
 def smoke_test():
     exe = os.path.join(BUNDLE, "Contents", "MacOS", APP)
     py = os.path.join(BUNDLE, "Contents", "Resources", "python", "bin", "python3.13")
@@ -275,6 +291,7 @@ def main():
     build_runtime(contents)
     build_app_sources(contents)
     build_launcher(contents)
+    normalize_modes()
     exe = smoke_test()
     size = subprocess.run(["du", "-sh", BUNDLE], stdout=subprocess.PIPE).stdout.decode().split()[0]
     n = sum(len(f) for _r, _d, f in os.walk(BUNDLE))
