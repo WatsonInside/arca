@@ -459,7 +459,7 @@ def main():
         time.sleep(0.06)
         drift = ui.js("""(() => {
           const seg = document.querySelector('#c-format');
-          const a = seg.querySelector('[aria-selected="true"]').getBoundingClientRect();
+          const a = seg.querySelector('[aria-checked="true"]').getBoundingClientRect();
           const p = seg.querySelector('.seg-pill').getBoundingClientRect();
           return +(p.x - a.x).toFixed(1);
         })()""")
@@ -478,9 +478,9 @@ def main():
           b.click(); b.focus(); return b.dataset.id; })()""")
         time.sleep(0.25)
         ui.key("ArrowRight", "ArrowRight", 39)
-        one = ui.js("""document.querySelector('#c-format [aria-selected="true"]').dataset.id""")
+        one = ui.js("""document.querySelector('#c-format [aria-checked="true"]').dataset.id""")
         ui.key("ArrowRight", "ArrowRight", 39)
-        two = ui.js("""document.querySelector('#c-format [aria-selected="true"]').dataset.id""")
+        two = ui.js("""document.querySelector('#c-format [aria-checked="true"]').dataset.id""")
         check("键盘可连续切换格式", one != two and two is not None, f"{one} → {two}")
 
         # RAR without WinRAR is not "disabled": it becomes available by pointing
@@ -490,7 +490,7 @@ def main():
         rar_state = ui.js("""(() => {
           const b = document.querySelector('#c-format button[data-id="rar"]');
           if (!b) return null;
-          const sel = document.querySelector('#c-format [aria-selected="true"]');
+          const sel = document.querySelector('#c-format [aria-checked="true"]');
           return {aria: b.getAttribute('aria-disabled'), disabled: b.disabled,
                   tag: (b.querySelector('.ext') || {}).textContent || '',
                   focusable: b.tabIndex >= 0, selectedBefore: sel.dataset.id};
@@ -526,9 +526,9 @@ def main():
         time.sleep(0.5)
         check("跳转后设置可正常关闭", ui.js("!document.querySelector('.sheet')"))
         check("点击 RAR 未改变当前格式",
-              ui.js("""document.querySelector('#c-format [aria-selected="true"]').dataset.id""")
+              ui.js("""document.querySelector('#c-format [aria-checked="true"]').dataset.id""")
               == (rar_state or {}).get("selectedBefore"),
-              str(ui.js("""document.querySelector('#c-format [aria-selected="true"]').dataset.id""")))
+              str(ui.js("""document.querySelector('#c-format [aria-checked="true"]').dataset.id""")))
 
         ui.js("document.querySelector('#c-par2-single').click()")
         ui.js("document.querySelector('#c-par2').click()")

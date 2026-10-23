@@ -124,6 +124,8 @@ function toast(message, kind = 'info', iconId = null) {
   el.dataset.count = '1';
   const ic = iconId || (kind === 'ok' ? 'i-check-circle' : kind === 'err' ? 'i-alert' : 'i-info');
   el.innerHTML = `${icon(ic, 'ic')}<span class="toast-text">${esc(message)}</span>${kind === 'err' ? '<button class="toast-close" aria-label="关闭">×</button>' : ''}`;
+  // 容器是 polite；错误再叠加 assertive，让读屏立即播报而不排队。
+  if (kind === 'err') el.setAttribute('role', 'alert');
   box.appendChild(el);
   if (kind === 'err') el.querySelector('.toast-close').addEventListener('click', () => el.remove());
   setTimeout(() => {
@@ -202,7 +204,7 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
   const reuse = container.dataset.sig === sig && !!container.querySelector('button[data-id]');
   if (!reuse) {
     container.innerHTML = '<div class="seg-pill"></div>' + items.map((it) => `
-      <button role="tab" data-id="${esc(it.id)}" aria-selected="false"
+      <button role="radio" data-id="${esc(it.id)}" aria-checked="false"
         ${it.disabled ? 'disabled' : ''} ${it.ariaDisabled ? 'aria-disabled="true"' : ''}
         title="${esc(it.title || '')}">
         ${esc(it.label)}${it.tag ? `<span class="ext">${esc(it.tag)}</span>` : ''}
@@ -215,7 +217,7 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
   // parked on the old option and the control would look dead.
   const select = (btn, fire) => {
     $$('button[data-id]', container).forEach((b) => {
-      b.setAttribute('aria-selected', String(b === btn));
+      b.setAttribute('aria-checked', String(b === btn));
     });
     syncSeg(container);
     if (fire) onPick(btn.dataset.id);
@@ -230,7 +232,7 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
       if (onUnavailable) onUnavailable(btn.dataset.id);
       return;
     }
-    if (btn.getAttribute('aria-selected') === 'true') return;
+    if (btn.getAttribute('aria-checked') === 'true') return;
     select(btn, true);
   };
   container.onkeydown = (e) => {
@@ -240,7 +242,7 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
       .filter((b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true');
     if (!opts.length) return;
     e.preventDefault();
-    const at = opts.findIndex((b) => b.getAttribute('aria-selected') === 'true');
+    const at = opts.findIndex((b) => b.getAttribute('aria-checked') === 'true');
     let next;
     if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = opts.length - 1;
@@ -253,13 +255,17 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
   // when the buttons were reused and their attributes still say otherwise.
   const opts = $$('button[data-id]', container);
   const wanted = opts.find((b) => b.dataset.id === activeId);
-  opts.forEach((b) => b.setAttribute('aria-selected', String(b === wanted)));
+  opts.forEach((b) => {
+    b.setAttribute('aria-checked', String(b === wanted));
+    // radiogroup 的 roving tabindex：只有选中项在 Tab 序里。
+    b.tabIndex = b === wanted || (!wanted && !b.disabled) ? 0 : -1;
+  });
   let active = wanted;
   if (!active) {
     // Nothing selected (stale or unknown value)? Fall back to the first usable
     // option so the pill always has somewhere to sit.
     active = container.querySelector('button[data-id]:not([disabled]):not([aria-disabled="true"])');
-    if (active) active.setAttribute('aria-selected', 'true');
+    if (active) active.setAttribute('aria-checked', 'true');
   }
   // A rebuilt pill has to appear parked, not slide in from the left edge.
   syncSeg(container, { instant: !reuse });
@@ -267,7 +273,7 @@ function buildSeg(container, items, activeId, onPick, onUnavailable) {
 
 function syncSeg(container, opts) {
   const pill = container.querySelector('.seg-pill');
-  const active = container.querySelector('button[aria-selected="true"]');
+  const active = container.querySelector('button[aria-checked="true"]');
   if (!pill || !active) return;
   // offsetLeft/offsetWidth are layout units, so an ancestor's entrance
   // transform (the sheet scales in from 0.985) can't shrink the measurement —
@@ -355,7 +361,7 @@ function renderCompress() {
     $('#c-meta').textContent = `${c.items.length} 项 · ${files} 个文件 · ${dirs} 个文件夹`
       + (total ? ` · ${fmtSize(total)}` : c.items.every((i) => !i.isDir) ? '' : ' · 大小待扫描');
     $('#c-list').innerHTML = c.items.map((it, idx) => `
-      <div class="file-row" data-idx="${idx}" style="animation-delay:${Math.min(idx, 6) * 18}ms">
+      <div class="file-row" data-idx="${idx}" tabindex="0" style="animation-delay:${Math.min(idx, 6) * 18}ms">
         <div class="file-ico ${it.isDir ? 'folder' : ''}">${icon(it.isDir ? 'i-folder' : 'i-file')}</div>
         <div class="file-main">
           <b title="${esc(it.name)}">${esc(midEllipsis(it.name, 52))}</b>
@@ -646,7 +652,7 @@ function renderExtract() {
   more.classList.toggle('hidden', entries.length <= show.length);
   more.textContent = `显示全部 ${entries.length} 条`;
   $('#x-table').innerHTML = show.length ? show.map((e) => `
-    <tr data-entry="${esc(e.path)}">
+    <tr data-entry="${esc(e.path)}" tabindex="0">
       <td class="name ${e.isDir ? 'dir' : ''}">${icon(e.isDir ? 'i-folder' : 'i-file', 'lock-ic')} ${esc(e.path)}</td>
       <td class="num">${e.isDir ? '—' : fmtSize(e.size)}</td>
       <td>${esc((e.modified || '').slice(5).replace('T', ' ')) || '—'}</td>
@@ -949,20 +955,26 @@ async function pollJobs() {
     Object.keys(state.jobStatus).forEach((id) => {
       if (!liveIds.has(id)) delete state.jobStatus[id];
     });
+    // 首轮轮询只登记现状不播报；此后新出现即已终态的任务（快于轮询间隔完成，
+    // 或由 Finder 服务在会话中发起）同样要提示——否则小任务的成败永远无声。
+    const fresh = !state.pollBooted;
     jobs.forEach((j) => {
       const prev = state.jobStatus[j.id];
-      if (prev && prev !== j.status) {
+      const terminal = j.status === 'done' || j.status === 'error';
+      const changed = prev ? prev !== j.status : (!fresh && terminal);
+      if (changed && terminal) {
         if (j.status === 'done') {
           const extra = j.result && j.result.parts > 1 ? ` · ${j.result.parts} 个分卷` : '';
           toast(`${j.kind === 'test' ? '校验通过' : '完成'} · ${j.title.replace(/^(压缩|解压|校验) /, '')}${extra}`, 'ok');
           native('attention');
-        } else if (j.status === 'error') {
+        } else {
           toast(j.error || '任务失败', 'err');
           native('attention');
         }
       }
       state.jobStatus[j.id] = j.status;
     });
+    state.pollBooted = true;
     state.jobs = jobs;
     // The rail must follow the queue from any view -- renderQueue() only runs on
     // the task page, so calling it from there left "最近任务" stale while
@@ -1828,7 +1840,7 @@ async function openSettings(focus) {
         <h3>常规</h3>
         <div class="sheet-row">
           <label>主题<small>跟随系统或强制指定</small></label>
-          <div class="seg" id="set-theme"></div>
+          <div class="seg" id="set-theme" role="radiogroup" aria-label="主题"></div>
         </div>
         <div class="sheet-row">
           <label>压缩格式</label>
@@ -2727,6 +2739,24 @@ function wireEvents() {
     if (!btn) return;
     removeCompressItem(Number(btn.dataset.remove));
   });
+  // 列表键盘化（§10.2）：行可聚焦，↑↓ 移动，Delete 移除行——移除的只是列表项。
+  $('#c-list').addEventListener('keydown', (e) => {
+    const row = e.target.closest('.file-row');
+    if (!row) return;
+    const rows = [...document.querySelectorAll('#c-list .file-row')];
+    const at = rows.indexOf(row);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = rows[at + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (next) next.focus();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      removeCompressItem(Number(row.dataset.idx));
+      const rest = document.querySelectorAll('#c-list .file-row');
+      const target = rest[Math.min(at, rest.length - 1)];
+      if (target) target.focus();
+    }
+  });
   $('#c-level').addEventListener('input', (e) => {
     state.c.level = Number(e.target.value);
     $('#c-level-name').textContent = LEVEL_NAMES[state.c.level];
@@ -2895,6 +2925,15 @@ function wireEvents() {
     renderExtract();
   });
   $('#x-over').addEventListener('change', (e) => { state.x.overwrite = e.target.value; renderExtract(); });
+  $('#x-table').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const rows = [...document.querySelectorAll('#x-table tr[data-entry]')];
+    const at = rows.indexOf(document.activeElement);
+    if (at < 0) return;
+    e.preventDefault();
+    const next = rows[at + (e.key === 'ArrowDown' ? 1 : -1)];
+    if (next) next.focus();
+  });
   $('#x-show-all').addEventListener('click', () => {
     state.x.expanded = true;
     renderExtract();
