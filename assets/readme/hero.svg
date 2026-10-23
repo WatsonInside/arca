@@ -1,99 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 440" width="1200" height="440" role="img" aria-label="Arca：macOS 压缩与解压，拖进去、看清楚、开始。">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Arca — macOS 上的压缩与解压</title>
+  <desc id="desc">左侧是项目名与一句话说明：拖进去、看清楚、再开始；右侧是一条真实的处理流程：文件经归档箱得到带分卷与 PAR2 恢复记录的 7z 归档。</desc>
+
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0a0b10"/>
-      <stop offset="1" stop-color="#0d1018"/>
+    <linearGradient id="depth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b0d14"/>
+      <stop offset="1" stop-color="#080910"/>
     </linearGradient>
-    <radialGradient id="glowA" cx="0.18" cy="0.2" r="0.6">
-      <stop offset="0" stop-color="#6d6df8" stop-opacity="0.30"/>
-      <stop offset="1" stop-color="#6d6df8" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowB" cx="0.86" cy="0.85" r="0.55">
-      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.20"/>
-      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#8b8bff"/>
-      <stop offset="1" stop-color="#38bdf8"/>
-    </linearGradient>
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
-    </pattern>
   </defs>
 
-  <rect width="1200" height="440" fill="url(#bg)"/>
-  <rect width="1200" height="440" fill="url(#grid)"/>
-  <rect width="1200" height="440" fill="url(#glowA)"/>
-  <rect width="1200" height="440" fill="url(#glowB)"/>
+  <rect width="1200" height="400" rx="18" fill="url(#depth)"/>
 
-  <!-- wordmark -->
-  <text x="72" y="150" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-        font-size="76" font-weight="700" letter-spacing="-1.5" fill="#f4f5f9">Arca</text>
-  <text x="74" y="196" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-        font-size="23" fill="#a9b0c3">macOS 上的压缩与解压：拖进去，看清楚，再开始。</text>
-  <text x="74" y="232" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-        font-size="16" fill="#7f879b">原生窗口与 WKWebView · 内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0</text>
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="64" y="148" font-size="80" font-weight="700" letter-spacing="-1.5" fill="#f4f5f9">Arca</text>
+    <text x="66" y="196" font-size="26" fill="#b3b9c9">拖进去，看清楚，再开始。</text>
+    <text x="66" y="232" font-size="19" fill="#8d94a6">macOS 原生 · 内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0</text>
 
-  <!-- chips -->
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-     font-size="14" font-weight="600" fill="#dfe3ee">
-    <rect x="74" y="262" width="66" height="32" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
-    <text x="91" y="283">7Z</text>
-    <rect x="150" y="262" width="72" height="32" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
-    <text x="164" y="283">ZIP</text>
-    <rect x="232" y="262" width="112" height="32" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
-    <text x="246" y="283">TAR.ZST</text>
-    <rect x="354" y="262" width="118" height="32" rx="16" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
-    <text x="368" y="283" fill="#9aa2b6">RAR · 只读</text>
-  </g>
-
-  <!-- right: file → box → archive -->
-  <g transform="translate(706 124) scale(0.76)">
-    <!-- files -->
-    <g stroke="#8b8bff" stroke-opacity="0.75" stroke-width="1.6" fill="#141826">
-      <rect x="0" y="66" width="86" height="104" rx="10" transform="rotate(-8 43 118)"/>
-      <rect x="18" y="46" width="86" height="104" rx="10" transform="rotate(-3 61 98)"/>
-      <rect x="40" y="26" width="86" height="104" rx="10"/>
-    </g>
-    <g fill="#8b8bff" fill-opacity="0.55">
-      <rect x="54" y="48" width="58" height="6" rx="3"/>
-      <rect x="54" y="64" width="40" height="6" rx="3"/>
-    </g>
-
-    <!-- arrow -->
-    <path d="M148 78h58" stroke="url(#stroke)" stroke-width="2" stroke-linecap="round"/>
-    <path d="M198 72l10 6-10 6" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-
-    <!-- box -->
-    <g transform="translate(222 18)">
-      <rect x="0" y="26" width="128" height="86" rx="12" fill="#161a29" stroke="#ffffff" stroke-opacity="0.14" stroke-width="1.6"/>
-      <rect x="-6" y="10" width="140" height="24" rx="9" fill="#1d2333" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.6"/>
-      <path d="M18 54h92" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.6" stroke-linecap="round"/>
-      <path d="M18 68h64" stroke="#ffffff" stroke-opacity="0.07" stroke-width="1.6" stroke-linecap="round"/>
-      <circle cx="108" cy="88" r="13" fill="#6d6df8" fill-opacity="0.22"/>
-      <path d="M102 88l4 4 8-9" fill="none" stroke="#b9b9ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-    </g>
-
-    <!-- arrow -->
-    <path d="M368 78h52" stroke="url(#stroke)" stroke-width="2" stroke-linecap="round"/>
-    <path d="M412 72l10 6-10 6" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-
-    <!-- archive result -->
-    <g transform="translate(430 28)">
-      <rect x="0" y="0" width="216" height="76" rx="14" fill="#161a29" stroke="#ffffff" stroke-opacity="0.14" stroke-width="1.6"/>
-      <text x="18" y="32" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-            font-size="15" font-weight="600" fill="#eef0f6">photos.7z</text>
-      <text x="18" y="55" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-            font-size="12" fill="#8d95a9">246 MB · 3 卷 · PAR2 +5%</text>
+    <g font-size="19" font-weight="600" fill="#e3e6ef">
+      <rect x="66" y="266" width="78" height="38" rx="19" fill="#ffffff" fill-opacity="0.07"/>
+      <text x="88" y="291">7Z</text>
+      <rect x="154" y="266" width="84" height="38" rx="19" fill="#ffffff" fill-opacity="0.07"/>
+      <text x="172" y="291">ZIP</text>
+      <rect x="248" y="266" width="128" height="38" rx="19" fill="#ffffff" fill-opacity="0.07"/>
+      <text x="266" y="291">TAR.ZST</text>
+      <rect x="386" y="266" width="132" height="38" rx="19" fill="#ffffff" fill-opacity="0.05"/>
+      <text x="404" y="291" fill="#a6adbf">RAR · 只读</text>
     </g>
   </g>
 
-  <!-- footer line -->
-  <line x1="72" y1="356" x2="1128" y2="356" stroke="#ffffff" stroke-opacity="0.08"/>
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
-     font-size="14" fill="#7f879b">
-    <text x="72" y="388">全程本机完成，文件不上传</text>
-    <text x="470" y="388">AES-256 · 分卷 · PAR2 恢复记录</text>
-    <text x="880" y="388">Finder 右键 · 默认打开方式 · 自更新</text>
+  <g id="project-proof" transform="translate(700 100) scale(0.78)">
+    <g id="inputs" stroke="#8b8bff" stroke-opacity="0.8" stroke-width="2" fill="#12151f">
+      <rect x="0" y="52" width="84" height="104" rx="10" transform="rotate(-9 42 104)"/>
+      <rect x="16" y="34" width="84" height="104" rx="10" transform="rotate(-3 58 86)"/>
+      <rect x="36" y="16" width="84" height="104" rx="10"/>
+    </g>
+    <g id="inputs-lines" fill="#8b8bff" fill-opacity="0.5">
+      <rect x="50" y="38" width="56" height="7" rx="3.5"/>
+      <rect x="50" y="56" width="38" height="7" rx="3.5"/>
+    </g>
+
+    <g id="flow-in">
+      <path d="M136 68h44" stroke="#7c83f0" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M174 61l9 7-9 7" fill="none" stroke="#7c83f0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g id="archive-box" transform="translate(200 8)">
+      <rect x="0" y="24" width="126" height="88" rx="12" fill="#161a25" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+      <rect x="-7" y="8" width="140" height="26" rx="10" fill="#1d2230" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+      <path d="M18 54h90" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2" stroke-linecap="round"/>
+      <path d="M18 70h62" stroke="#ffffff" stroke-opacity="0.09" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="106" cy="88" r="14" fill="#6d6df8" fill-opacity="0.28"/>
+      <path d="M99 88l5 5 9-10" fill="none" stroke="#c7c7ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g id="flow-out">
+      <path d="M336 68h40" stroke="#4bb8f0" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M370 61l9 7-9 7" fill="none" stroke="#4bb8f0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g id="result" transform="translate(392 22)">
+      <rect x="0" y="0" width="204" height="96" rx="14" fill="#161a25" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+      <text x="18" y="36" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+            font-size="20" font-weight="650" fill="#eef0f6">photos.7z</text>
+      <text x="18" y="64" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" fill="#9aa2b6">246 MB · 3 卷</text>
+      <text x="18" y="86" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" fill="#7c83f0">PAR2 +5%</text>
+    </g>
+  </g>
+
+  <g id="footnote" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+     font-size="18" fill="#878fa3">
+    <line x1="64" y1="336" x2="1136" y2="336" stroke="#ffffff" stroke-opacity="0.10"/>
+    <text x="64" y="376">全程本机完成，文件不上传</text>
+    <text x="446" y="376">AES-256 · 分卷 · PAR2 恢复记录</text>
+    <text x="852" y="376">Finder 右键 · 自更新</text>
   </g>
 </svg>

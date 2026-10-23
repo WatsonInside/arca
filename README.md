@@ -17,6 +17,17 @@ Arca 是一个 macOS 原生压缩 / 解压工具。它不追求"支持一切格�
 - 内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0，装完即用，不需要额外装命令行工具。
 - 全程本机完成，文件不上传；唯一联网的动作是查更新，装不装由你决定。
 
+真实界面是这样的（浅色与深色都跟随系统）：
+
+<p align="center">
+  <img src="./assets/shots/01-compress.png" width="49%" alt="压缩页：格式、级别、分卷、密码，渐进披露">
+  <img src="./assets/shots/02-extract.png" width="49%" alt="解压页：先看目录树，再决定解到哪">
+</p>
+<p align="center">
+  <img src="./assets/shots/04-dark.png" width="49%" alt="深色主题：跟随系统或手动指定">
+  <img src="./assets/shots/05-settings.png" width="49%" alt="设置：常规 / 系统集成 / 更新与密码，一屏可见">
+</p>
+
 ---
 
 <p align="center">
@@ -78,14 +89,6 @@ build/venv/bin/python scripts/package.py            # 生成 dist/*.dmg 与 *.pk
 所以界面上这两行会直接不渲染，而不是显示出来再静默忽略。同理，RAR 标签会带「需配置」标记，
 点它不会假装选中，而是直接把你送到设置里的 WinRAR 那一行。
 
-<p align="center">
-  <img src="./assets/shots/01-compress.png" width="49%" alt="压缩页：格式、级别、分卷、密码，渐进披露">
-  <img src="./assets/shots/02-extract.png" width="49%" alt="解压页：先看目录树，再决定解到哪">
-</p>
-<p align="center">
-  <img src="./assets/shots/04-dark.png" width="49%" alt="深色主题：跟随系统或手动指定">
-  <img src="./assets/shots/05-settings.png" width="49%" alt="设置：常规 / 系统集成 / 更新与密码，一屏可见">
-</p>
 
 几个用起来才会注意到的细节：
 
