@@ -2363,6 +2363,7 @@ function openUpdateSheet(info, opts) {
 
   let stopped = false;
   let settled = false;      // installed or explicitly skipped
+  let doneSeen = false;     // the sheet itself watched this install reach done
   let busy = false;
   const close = () => {
     stopped = true;
@@ -2427,6 +2428,7 @@ function openUpdateSheet(info, opts) {
         : `${icon('i-check')}完成`;
       if (!opts.restart) go.classList.remove('primary');
       busy = false;
+      doneSeen = true;   // observed locally: global state may not know this install
       $('#upd-skip', back).classList.add('hidden');
       // Nothing left to postpone and nothing left to decide: one primary
       // button ("完成") closes the sheet, the header X still works.
@@ -2474,11 +2476,15 @@ function openUpdateSheet(info, opts) {
   go.onclick = async () => {
     if (busy) return;
     if (jobsBusy()) { toast('有任务正在进行，完成后再更新', 'err'); return; }
+    // The app sheet's install state is only visible to this sheet's own poll
+    // loop; state.componentInstall never carries it, so the old lookup always
+    // returned {} and the restart branch never fired.
     const inst = opts.id === '7zz'
       ? ((state.update && state.update.install) || {})
       : ((state.componentInstall && state.componentInstall[opts.id]) || {});
-    if (settled || inst.phase === 'done') {
-      if (opts.restart && inst.phase === 'done') {
+    const done = doneSeen || inst.phase === 'done';
+    if (settled || done) {
+      if (opts.restart && done) {
         go.disabled = true;
         go.innerHTML = `${icon('i-refresh')}正在重启…`;
         try {

@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-12%2B-0b0d14?style=flat-square&logo=apple&logoColor=white" alt="macOS 12+">
-  <img src="https://img.shields.io/badge/release-v1.0.6-6d6df8?style=flat-square" alt="v1.0.6">
+  <img src="https://img.shields.io/badge/release-v1.0.7-6d6df8?style=flat-square" alt="v1.0.7">
   <img src="https://img.shields.io/badge/7--Zip-26.05-38bdf8?style=flat-square" alt="7-Zip 26.05">
   <img src="https://img.shields.io/badge/license-Apache--2.0-0b0d14?style=flat-square" alt="Apache-2.0">
   <img src="https://img.shields.io/badge/%E6%96%87%E4%BB%B6-%E4%B8%8D%E4%B8%8A%E4%BC%A0-10a35a?style=flat-square" alt="文件不上传">
@@ -46,7 +46,7 @@ Arca 是一个 macOS 原生压缩 / 解压工具。它不追求"支持一切格�
 
 ```bash
 # 校验下载是否完整（摘要与 Release 里的 .sha256 一致）
-shasum -a 256 ~/Downloads/Arca-1.0.6.dmg
+shasum -a 256 ~/Downloads/Arca-1.0.7.dmg
 ```
 
 **方式二 · 从源码构建**
