@@ -1302,24 +1302,54 @@ table.entries .dir { color: var(--accent); }
 /* ---- first-launch stats notice -------------------------------------------
    One-time allow/deny choice; equal visual weight on purpose (no primary).
    Same column math as .topbar/.scroll so all edges line up. */
+/* 紧凑单行（复核 P5）：收起态 ~40px，别把「高级选项」入口挤进固定操作条后面；
+   完整披露收进内联「详情」展开器（DESIGN §7 的可聚焦展开器模式）。 */
 .stats-notice {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   flex: none;
-  margin: 0 max(34px, calc((100% - var(--col)) / 2)) 10px;
-  padding: 10px 14px;
+  margin: 0 max(34px, calc((100% - var(--col)) / 2)) 6px;
+  padding: 5px 10px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-1);
 }
-.stats-notice .sn-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.stats-notice .sn-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
 .stats-notice .sn-body b { font-size: 13px; font-weight: 600; color: var(--ink); }
 .stats-notice .sn-body span {
   font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.stats-notice .sn-detail summary {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.stats-notice .sn-detail summary:hover { color: var(--ink); background: var(--surface-3); }
+.stats-notice .sn-detail summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.stats-notice .sn-detail p {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--ink-2);
+  max-width: 72ch;
 }
 .stats-notice .sn-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
@@ -1346,3 +1376,8 @@ table.entries .dir { color: var(--accent); }
   max-width: 52ch;
   overflow-wrap: anywhere;
 }
+
+/* 横幅在场时的过渡间距补偿：合计找回 ~12px，让 1120×764 首屏装下
+   「高级选项」入口；横幅消失即还原，常规布局零变化。 */
+body.stats-notice-on .topbar { padding-bottom: 4px; }
+body.stats-notice-on .scroll { padding-top: 0; }

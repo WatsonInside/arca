@@ -2217,17 +2217,24 @@ function renderStatsNotice() {
   bar.innerHTML = `
     <div class="sn-body">
       <b>匿名使用统计</b>
-      <span>为估算安装量与活跃设备，Arca 会在首次启动与每日首次启动时各发送一条记录：本机保存的随机标识、App 版本、系统大版本与架构。不收集文件名、路径、压缩内容或密码。之后可随时在「设置 → 更新来源与隐私」中修改。</span>
+      <span>发送随机标识、版本与系统信息，不涉及文件内容与密码；可随时在设置中修改。</span>
+      <details class="sn-detail">
+        <summary aria-label="展开统计发送内容详情">详情</summary>
+        <p>为估算安装量与活跃设备，Arca 会在首次启动与每日首次启动时各发送一条记录：本机保存的随机标识、App 版本、macOS 大版本与架构。不收集文件名、路径、压缩内容或密码。之后可随时在「设置 → 更新来源与隐私」中修改。</p>
+      </details>
     </div>
     <div class="sn-actions">
       <button class="btn ghost" id="sn-allow">允许</button>
       <button class="btn ghost" id="sn-deny">不允许</button>
     </div>`;
   topbar.after(bar);
+  // 横幅在场时收紧它与上下元素的过渡间距，给首屏内容找回高度（复核 P5）。
+  document.body.classList.add('stats-notice-on');
   const settle = async (allow) => {
     for (const b of bar.querySelectorAll('button')) b.disabled = true;
     await patchSettings({ statsPrompted: true, anonymousStats: allow });
     bar.remove();
+    document.body.classList.remove('stats-notice-on');
   };
   bar.querySelector('#sn-allow').onclick = () => settle(true);
   bar.querySelector('#sn-deny').onclick = () => settle(false);

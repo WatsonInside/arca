@@ -358,6 +358,71 @@ def main():
         else:
             check("归档条目右键菜单", False, "归档没有条目")
 
+        # ------------------------------------------- 轮询焦点稳定（专项回归锁）
+        # patchJobEl 必须幂等补丁：轮询重画时如果整卡（或取消按钮）被重建，
+        # 焦点立刻丢失、方向键断链。锁法：聚焦运行中任务卡的取消按钮，跨过
+        # 至少 2 个轮询周期（1.6s×2）后确认它仍是同一节点且保持焦点。
+        probe = os.path.join(DEMO, "focus-probe.bin")
+        os.makedirs(DEMO, exist_ok=True)
+        with open(probe, "wb") as fh:
+            fh.write(os.urandom(320 * 1024 * 1024))   # 随机数据 + 高级别，保证任务跑得过采样窗口
+        api(port, token, "/jobs/clear", {})
+        api(port, token, "/compress", {"inputs": [probe], "name": "焦点探针",
+                                       "destDir": DEMO, "format": "7z", "level": 7,
+                                       "par2Percent": 5})
+        # 任务页未激活时 renderQueue 不渲染，#q-list 恒空——用 ⌘3 切过去。
+        ui.js("document.dispatchEvent(new KeyboardEvent('keydown', "
+              "{key: '3', metaKey: true, bubbles: true, cancelable: true})); 'ok'")
+        time.sleep(1.0)
+        ui.js("delete window.__focusBtn")
+        samples = 0
+        gone = 0
+        broken = ""
+        finished = False
+        deadline = time.time() + 60
+        while time.time() < deadline and samples < 14 and not broken:
+            snap = ui.js("""(() => {
+              const card = document.querySelector('#q-list .job.running, #q-list .job.queued');
+              if (!card) return {gone: true};
+              const btn = card.querySelector('[data-cancel]');
+              if (!btn) return {gone: true};
+              if (!window.__focusBtn) window.__focusBtn = btn;
+              if (document.activeElement !== window.__focusBtn) window.__focusBtn.focus();
+              return {same: window.__focusBtn === btn,
+                      connected: window.__focusBtn.isConnected,
+                      focused: document.activeElement === window.__focusBtn};
+            })()""")
+            if snap is None:
+                time.sleep(0.3)
+                continue
+            if snap.get("gone"):
+                # 卡片还没渲染出来，或任务已结束（结束会重建 actions，属正常）
+                if samples > 0 and ui.js(
+                        "!!document.querySelector('#q-list .job.done, #q-list .job.error')"):
+                    finished = True
+                    break
+                gone += 1
+                if gone > 40:
+                    break
+            else:
+                gone = 0
+                samples += 1
+                if not (snap["same"] and snap["connected"] and snap["focused"]):
+                    broken = f"sample#{samples} {snap}"
+            time.sleep(0.45)
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
+        api(port, token, "/jobs/clear", {})
+        check("轮询周期内任务卡焦点不丢（幂等补丁）",
+              (samples >= 8 or finished) and not broken,
+              f"samples={samples} finished={finished} {broken}")
+        # 回到解压页：后续用例依赖“drop 落在解压页”的隐式前提。
+        ui.js("document.dispatchEvent(new KeyboardEvent('keydown', "
+              "{key: '2', metaKey: true, bubbles: true, cancelable: true})); 'ok'")
+        time.sleep(0.8)
+
         # ------------------------------------------------------- zstd + PAR2
         # A .tar.zst plus recovery records is the only archive that can offer
         # the recovery entries, so it needs its own fixture.

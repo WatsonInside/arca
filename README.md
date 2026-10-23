@@ -137,7 +137,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 | integrity 78 / selftest 38 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
 | menu 82 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
 | keyring 53 / appupdate 26 | 钥匙串与触控 ID、应用自更新 |
-| stats 16 | 匿名统计客户端状态机与日志聚合口径 |
+| stats 17 | 匿名统计客户端状态机与日志聚合口径 |
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
 
 ```

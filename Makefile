@@ -41,8 +41,8 @@ test:
 test-fast:
 	node --check src/arca/web/app.js
 	$(PY) scripts/design_audit.py
-	$(PY) scripts/selftest.py
-	$(PY) scripts/progress_test.py
+	HOME=$$(mktemp -d) $(PY) scripts/selftest.py
+	HOME=$$(mktemp -d) $(PY) scripts/progress_test.py
 
 audit:
 	$(PY) scripts/design_audit.py

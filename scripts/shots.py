@@ -284,30 +284,33 @@ def main():
             time.sleep(0.4)
         shoot(ws, "05-settings.png")
 
-        # ---- same sheet scrolled to the component list (zstd / par2 updates)
+        # ---- 组件区：展开「更新来源与隐私」折叠组（统计开关 + 组件列表）。
+        # .sheet-body 按一屏规则不可滚动，scrollIntoView 是空操作（复核 P2），
+        # 三张设置特写改为各自展开对应的折叠组，保证画面互不相同。
         ws.call("Runtime.evaluate", {"expression": """
-          const s = document.querySelector('#set-components');
-          if (s) s.scrollIntoView({block: 'center'});
-          'ok'
-        """, "returnByValue": True})
+          (() => {
+            [...document.querySelectorAll('details.sheet-fold')]
+              .forEach(d => { d.open = d.textContent.includes('更新来源与隐私'); });
+            return 'ok';
+          })()""", "returnByValue": True})
         time.sleep(0.7)
         shoot(ws, "12-components.png")
 
         # ---- Finder 集成：右键服务区，然后默认打开方式区
         ws.call("Runtime.evaluate", {"expression": """
-          const body = document.querySelector('.sheet-body');
-          const sec = document.querySelector('#set-finder');
-          if (body && sec) body.scrollTop = sec.offsetTop - 8;
-          'ok'
-        """, "returnByValue": True})
+          (() => {
+            [...document.querySelectorAll('details.sheet-fold')]
+              .forEach(d => { d.open = d.textContent.includes('右键菜单细节'); });
+            return 'ok';
+          })()""", "returnByValue": True})
         time.sleep(1.0)
         shoot(ws, "13-finder.png")
         ws.call("Runtime.evaluate", {"expression": """
-          const body = document.querySelector('.sheet-body');
-          const sec = document.querySelector('#set-default');
-          if (body && sec) body.scrollTop = sec.offsetTop - 8;
-          'ok'
-        """, "returnByValue": True})
+          (() => {
+            [...document.querySelectorAll('details.sheet-fold')]
+              .forEach(d => { d.open = d.textContent.includes('逐项打开方式'); });
+            return 'ok';
+          })()""", "returnByValue": True})
         time.sleep(0.7)
         shoot(ws, "14-default.png")
 

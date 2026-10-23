@@ -136,6 +136,11 @@ def flip_byte(path, offset):
 
 
 def main():
+
+    # 直接运行也必须隔离 HOME：本套件经 Settings/JobManager 写任务历史，
+    # 落进真实 ~/Library/Application Support/Arca/ 就违反 §1.1.7。
+    # （all_test 传入的隔离 HOME 会被替换成另一个空 HOME，行为不变。）
+    os.environ["HOME"] = tempfile.mkdtemp(prefix="arca-selftest-home-")
     tmp = tempfile.mkdtemp(prefix="arca-int-")
     src, payloads = build_samples(tmp)
     out_dir = os.path.join(tmp, "out")
