@@ -203,8 +203,10 @@ class JobManager:
                     job.update(status="cancelled", phase="已取消",
                                finished=time.time(), error="已取消")
                 else:
+                    # item is the file being worked on: it must not linger on a
+                    # finished card (the subtitle falls back to the summary).
                     job.update(status="done", percent=100.0, phase="完成",
-                               finished=time.time(), eta=0)
+                               finished=time.time(), eta=0, item="")
             except Exception as exc:  # noqa: BLE001
                 if job.cancel.is_set():
                     job.update(status="cancelled", phase="已取消", error="已取消",
@@ -283,6 +285,10 @@ def make_compress_task(mgr: JobManager, opts: dict):
                 if "Scan" in line:
                     job.update(phase="正在扫描")
                 return
+            if job.phase == "正在扫描":
+                # The scan line only appears at the start; once a real percent
+                # arrives the job is compressing again.
+                job.update(phase="正在压缩")
             m = re.search(r"\d+\s+\+\s+(.+)$", line)
             job.progress(percent, m.group(1) if m else "", speed)
 
@@ -294,6 +300,9 @@ def make_compress_task(mgr: JobManager, opts: dict):
             _cleanup_outputs(opts, job.started or job.created)
             raise RuntimeError("已取消")
         if code != 0 and code != 1:
+            # A crashed or killed 7zz leaves a half-written archive behind; it
+            # cannot be opened, so it is never worth keeping.
+            _cleanup_outputs(opts, job.started or job.created)
             raise eng.EngineError(eng.describe_error(
                 log, code, format=opts["format"],
                 has_password=bool(opts.get("password"))) or "压缩失败")
@@ -483,6 +492,8 @@ def make_test_task(mgr: JobManager, archive: str, password: str = ""):
         cmd = mgr.engine.build_test_cmd(entry, password)
 
         def on_progress(percent, line, speed):
+            if percent is None:
+                return
             job.progress(percent, "", speed)
 
         code, log = mgr.engine.run(cmd, on_progress=on_progress, cancel=job.cancel,

@@ -69,6 +69,24 @@ _ERROR_HINTS = {
 }
 
 
+
+_PROGRESS_SEP = re.compile(r"[\r\n]+|\x08+")
+
+
+def split_progress(buf: str) -> tuple[list[str], str]:
+    """Split a 7-Zip output stream into complete records plus the leftover tail.
+
+    7-Zip 26.x redraws its progress line with backspaces when stdout is a pipe,
+    so "\\r\\n" alone never terminates a record: the whole stream stayed in the
+    buffer and no percentage was ever reported.
+    """
+    parts = _PROGRESS_SEP.split(buf)
+    tail = parts.pop() if parts else ""
+    if len(tail) > 65536:          # no separator in sight: keep it bounded
+        tail = tail[-4096:]
+    return parts, tail
+
+
 class EngineError(Exception):
     pass
 
@@ -519,7 +537,9 @@ class Engine:
             if not on_progress:
                 return
             now = time.time()
-            if total_bytes:
+            # Only a real percentage feeds the speed estimate: phase lines such
+            # as "Scan" arrive with percent=None and must not become a baseline.
+            if percent is not None and total_bytes:
                 dt = now - last[0]
                 if last[0] and dt > 0.25:
                     db = (percent - last[1]) / 100.0 * total_bytes
@@ -548,8 +568,10 @@ class Engine:
             text = chunk.decode("utf-8", "replace")
             chunks.append(text)
             buf += text
-            parts = re.split(r"[\r\n]+", buf)
-            buf = parts.pop() if parts else ""
+            # 7-Zip 26.x rewrites its progress line with backspaces when output
+            # is not a terminal, so "\r\n" alone never splits anything: the
+            # whole stream stayed in buf and no percent was ever reported.
+            parts, buf = split_progress(buf)
             for line in parts:
                 line = line.strip()
                 if not line:
@@ -557,8 +579,19 @@ class Engine:
                 m = re.findall(r"(\d{1,3})%", line)
                 if m:
                     emit(min(100, int(m[-1])), line)
-                else:
-                    emit(None, line) if False else None
+                elif "Scan" in line:
+                    # The first phase prints "0M Scan ." with no percent yet;
+                    # without this the UI sat on 「准备中」 until 1% arrived.
+                    emit(None, line)
+        # The last record has no separator after it: flush it, otherwise the
+        # final 100% never reaches the UI and the job looks stuck at 99%.
+        for line in [*split_progress(buf)[0], split_progress(buf)[1]]:
+            line = line.strip()
+            if not line:
+                continue
+            m = re.findall(r"(\d{1,3})%", line)
+            if m:
+                emit(min(100, int(m[-1])), line)
         try:
             proc.wait(timeout=5)
         except Exception:
