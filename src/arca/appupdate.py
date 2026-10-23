@@ -180,20 +180,39 @@ def _write_marker(path, data):
 
 
 def relaunch_script(pid: int, bundle, log) -> str:
-    """Shell program that re-opens ``bundle`` once ``pid`` is gone."""
+    """Shell program that re-opens ``bundle`` once ``pid`` is gone.
+
+    `open` exiting 0 is not proof the app is up: right after a bundle swap
+    LaunchServices can accept the request and still fail to launch, so each
+    attempt is followed by a liveness check, then a bundle-id attempt, then a
+    direct exec of the binary as the last resort.  Everything is appended to
+    ``log`` because this runs after the previous process is gone.
+    """
     q = shlex.quote
-    exe = Path(bundle) / 'Contents' / 'MacOS' / 'Arca'
+    path = Path(bundle)
+    exe = path / 'Contents' / 'MacOS' / 'Arca'
     return (
         f'exec >>{q(str(log))} 2>&1; '
-        f'echo "--- $(date "+%Y-%m-%d %H:%M:%S") relaunch after pid {pid}"; '
-        # Bounded wait: a zombie still answers kill -0, so an unbounded loop
-        # could hang forever and never bring the app back.
+        f'echo "--- $(date "+%Y-%m-%d %H:%M:%S") relaunch bundle={q(str(path))} oldpid={pid}"; '
+        # Bounded wait: a zombie still answers kill -0.
         f'n=0; while kill -0 {pid} 2>/dev/null && [ $n -lt 30 ]; do sleep 0.2; n=$((n+1)); done; '
-        'for i in 1 2 3 4 5 6 7 8 9 10; do '
-        f'  if /usr/bin/open -n {q(str(bundle))}; then echo "open ok (try $i)"; exit 0; fi; '
-        '  echo "open failed (try $i)"; sleep 0.5; '
+        f'alive() {{ /usr/bin/pgrep -f {q(str(exe))} >/dev/null 2>&1; }}; '
+        'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do '
+        f'  if /usr/bin/open -n {q(str(path))}; then '
+        '    sleep 1; '
+        # Twice: a crash-on-launch process is briefly visible and would
+        # otherwise be mistaken for a successful restart.
+        '    if alive; then sleep 1; if alive; then echo "open ok (try $i)"; exit 0; fi; '
+        '      echo "opened then died (try $i)"; '
+        '    else echo "open returned 0 but nothing is running (try $i)"; fi; '
+        '  else '
+        '    echo "open failed (try $i)"; '
+        '  fi; '
+        '  sleep 0.5; '
         'done; '
-        f'echo "open unavailable, starting the binary directly"; '
+        'echo "trying bundle id com.arca.app"; '
+        'if /usr/bin/open -b com.arca.app; then sleep 1; if alive; then sleep 1; if alive; then echo "open -b ok"; exit 0; fi; fi; fi; '
+        f'echo "starting the binary directly: {q(str(exe))}"; '
         f'exec {q(str(exe))}'
     )
 

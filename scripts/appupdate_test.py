@@ -315,7 +315,10 @@ class Tests(unittest.TestCase):
         log = self.root / 'relaunch.log'
         script = a.relaunch_script(4242, bundle, log)
         self.assertIn('while kill -0 4242', script)
-        self.assertIn('for i in 1 2 3 4 5 6 7 8 9 10', script)
+        self.assertIn('for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15', script)
+        self.assertIn('pgrep -f', script)                                  # liveness check
+        self.assertIn('sleep 1; if alive', script)                         # checked twice
+        self.assertIn('/usr/bin/open -b com.arca.app', script)             # bundle-id fallback
         self.assertIn("/usr/bin/open -n", script)
         self.assertIn("'%s'" % str(bundle), script)          # quoted for spaces
         self.assertIn('exec ', script)
@@ -344,7 +347,7 @@ class Tests(unittest.TestCase):
         while time.time() < deadline and not marker.exists():
             time.sleep(.2)
         self.assertTrue(marker.exists(), log.read_text() if log.exists() else 'no log')
-        self.assertIn('relaunch after pid', log.read_text())
+        self.assertIn('oldpid=', log.read_text())
 
     def test_orphan_backup_is_swept_only_when_stale(self):
         import os
