@@ -178,6 +178,26 @@ def _write_marker(path, data):
         temporary.unlink(missing_ok=True)
 
 
+
+def relaunch_script(pid: int, bundle, log) -> str:
+    """Shell program that re-opens ``bundle`` once ``pid`` is gone."""
+    q = shlex.quote
+    exe = Path(bundle) / 'Contents' / 'MacOS' / 'Arca'
+    return (
+        f'exec >>{q(str(log))} 2>&1; '
+        f'echo "--- $(date "+%Y-%m-%d %H:%M:%S") relaunch after pid {pid}"; '
+        # Bounded wait: a zombie still answers kill -0, so an unbounded loop
+        # could hang forever and never bring the app back.
+        f'n=0; while kill -0 {pid} 2>/dev/null && [ $n -lt 30 ]; do sleep 0.2; n=$((n+1)); done; '
+        'for i in 1 2 3 4 5 6 7 8 9 10; do '
+        f'  if /usr/bin/open -n {q(str(bundle))}; then echo "open ok (try $i)"; exit 0; fi; '
+        '  echo "open failed (try $i)"; sleep 0.5; '
+        'done; '
+        f'echo "open unavailable, starting the binary directly"; '
+        f'exec {q(str(exe))}'
+    )
+
+
 class Updater:
     def __init__(self, settings):
         self.settings = settings
@@ -271,21 +291,52 @@ class Updater:
             self._confirm(confirmed_version)
             self.settings.dismiss_app_version(self.cached['latest'])
 
+
+    def _sweep_old_bundles(self):
+        """Delete `.Arca-old-*.app` left behind when a restart never happened.
+
+        A relaunch that fails leaves both the marker-less backup and the new
+        bundle in /Applications.  Only names in our own pattern are touched, and
+        only once they are clearly stale: a fresh backup may belong to a swap
+        that is still settling.
+        """
+        if self.bundle is None:
+            return
+        cutoff = time.time() - 3600
+        try:
+            candidates = list(self.bundle.parent.glob('.Arca-old-*.app'))
+        except OSError:
+            return
+        for path in candidates:
+            try:
+                if not re.fullmatch(r'\.Arca-old-\d+-[0-9a-f]{32}\.app', path.name):
+                    continue
+                if path.is_symlink() or path.stat().st_mtime > cutoff:
+                    continue
+                shutil.rmtree(path)
+            except OSError:
+                continue
+
     def relaunch(self):
         """Restart into the freshly installed bundle.
 
         A detached shell waits for this process to exit, then opens the bundle
         from disk.  Waiting matters: launching while the old process is still
-        alive would race the same bundle path and, on a slow machine, re-open
-        the very executable we are replacing.
+        alive races the same bundle path and can re-open the executable we are
+        replacing.
+
+        The first ``open`` right after a swap is the fragile part: LaunchServices
+        may still be updating its database, so the call fails with no visible
+        error.  Retry it, then fall back to starting the binary directly, and
+        keep a log — otherwise a failed restart is invisible after the process
+        is gone.
         """
         if not self.marker.exists() or self.bundle is None:
             raise UpdateError("还没有待生效的应用更新")
         if not (self.installer and self.installer.snapshot().get('phase') == 'done'):
             raise UpdateError("应用更新尚未安装完成")
-        target = str(self.bundle)
-        script = (f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.2; done; '
-                  f'/usr/bin/open -n {shlex.quote(target)}')
+        script = relaunch_script(os.getpid(), self.bundle,
+                                 Path(util.state_path('relaunch.log')))
         subprocess.Popen(["/bin/sh", "-c", script], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
@@ -294,6 +345,7 @@ class Updater:
 
     def startup(self, ready=False):
         if not self.marker.exists():
+            self._sweep_old_bundles()
             return
         try:
             data = json.loads(self.marker.read_text())

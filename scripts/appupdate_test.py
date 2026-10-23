@@ -309,5 +309,59 @@ class Tests(unittest.TestCase):
                 read.assert_not_called()
 
 
+    def test_relaunch_script_retries_then_starts_the_binary(self):
+        """A failed `open` right after the swap must not leave the app closed."""
+        bundle = self.root / 'Arca With Space.app'
+        log = self.root / 'relaunch.log'
+        script = a.relaunch_script(4242, bundle, log)
+        self.assertIn('while kill -0 4242', script)
+        self.assertIn('for i in 1 2 3 4 5 6 7 8 9 10', script)
+        self.assertIn("/usr/bin/open -n", script)
+        self.assertIn("'%s'" % str(bundle), script)          # quoted for spaces
+        self.assertIn('exec ', script)
+        self.assertIn(str(bundle / 'Contents' / 'MacOS' / 'Arca'), script)
+        self.assertIn(str(log), script)
+
+    def test_relaunch_script_really_restarts_a_bundle(self):
+        import subprocess
+        import time
+        bundle = self.root / 'Fake Bundle.app'
+        (bundle / 'Contents' / 'MacOS').mkdir(parents=True)
+        exe = bundle / 'Contents' / 'MacOS' / 'Arca'
+        marker = self.root / 'launched.txt'
+        exe.write_text('#!/bin/sh\necho started > "%s"\n' % marker)
+        exe.chmod(0o755)
+        log = self.root / 'relaunch.log'
+        victim = subprocess.Popen(['/bin/sleep', '1'])
+        # Reap it in the background: a zombie still answers kill -0, and the
+        # script (correctly) waits for the pid to disappear.  In production the
+        # old app's parent is launchd, which reaps immediately.
+        import threading
+        threading.Thread(target=victim.wait, daemon=True).start()
+        script = a.relaunch_script(victim.pid, bundle, log)
+        subprocess.Popen(['/bin/sh', '-c', script], start_new_session=True)
+        deadline = time.time() + 20
+        while time.time() < deadline and not marker.exists():
+            time.sleep(.2)
+        self.assertTrue(marker.exists(), log.read_text() if log.exists() else 'no log')
+        self.assertIn('relaunch after pid', log.read_text())
+
+    def test_orphan_backup_is_swept_only_when_stale(self):
+        import os
+        import time
+        parent = self.bundle.parent
+        stale = parent / ('.Arca-old-1700000000-%s.app' % ('a' * 32))
+        fresh = parent / ('.Arca-old-%d-%s.app' % (int(time.time()), 'b' * 32))
+        foreign = parent / '.Arca-old-not-ours.app'
+        for path in (stale, fresh, foreign):
+            (path / 'Contents').mkdir(parents=True)
+        old = time.time() - 7200
+        os.utime(stale, (old, old))
+        self.updater.startup(ready=True)          # no marker -> sweep
+        self.assertFalse(stale.exists(), 'stale backup should be removed')
+        self.assertTrue(fresh.exists(), 'fresh backup must survive')
+        self.assertTrue(foreign.exists(), 'only our own pattern is touched')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

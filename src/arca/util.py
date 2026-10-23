@@ -10,7 +10,7 @@ import sys
 import unicodedata
 
 APP_NAME = "Arca"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 BUNDLE_ID = "com.arca.archive"
 
 UNITS = ("B", "KB", "MB", "GB", "TB")
