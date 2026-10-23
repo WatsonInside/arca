@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-12%2B-0b0d14?style=flat-square&logo=apple&logoColor=white" alt="macOS 12+">
-  <img src="https://img.shields.io/badge/release-v1.0.7-6d6df8?style=flat-square" alt="v1.0.7">
+  <img src="https://img.shields.io/badge/release-v1.0.8-6d6df8?style=flat-square" alt="v1.0.8">
   <img src="https://img.shields.io/badge/7--Zip-26.05-38bdf8?style=flat-square" alt="7-Zip 26.05">
   <img src="https://img.shields.io/badge/license-Apache--2.0-0b0d14?style=flat-square" alt="Apache-2.0">
   <img src="https://img.shields.io/badge/%E6%96%87%E4%BB%B6-%E4%B8%8D%E4%B8%8A%E4%BC%A0-10a35a?style=flat-square" alt="文件不上传">
@@ -46,7 +46,7 @@ Arca 是一个 macOS 原生压缩 / 解压工具。它不追求"支持一切格�
 
 ```bash
 # 校验下载是否完整（摘要与 Release 里的 .sha256 一致）
-shasum -a 256 ~/Downloads/Arca-1.0.7.dmg
+shasum -a 256 ~/Downloads/Arca-1.0.8.dmg
 ```
 
 **方式二 · 从源码构建**
@@ -124,13 +124,19 @@ build/venv/bin/python scripts/package.py            # 生成 dist/*.dmg 与 *.pk
    → 新版本成功启动后清理旧包；启动失败则保留并提示人工恢复路径
 ```
 
-**质量门禁**（`scripts/all_test.py` 一条命令跑完，18 个套件）：
+**匿名使用统计**：首次启动与每日首次启动各发一条匿名记录（仅版本号、系统版本、架构和
+一个随机安装 ID，不含任何个人数据），用于统计安装量与日活。可在
+「设置 → 更新来源与隐私」中随时关闭；聚合口径与对外数据接口见
+[docs/STATS-API.md](docs/STATS-API.md)。
+
+**质量门禁**（`scripts/all_test.py` 一条命令跑完，19 个套件）：
 
 | 套件 | 覆盖 |
 | --- | --- |
 | integrity 78 / selftest 38 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
 | menu 82 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
 | keyring 53 / appupdate 26 | 钥匙串与触控 ID、应用自更新 |
+| stats 16 | 匿名统计客户端状态机与日志聚合口径 |
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
 
 ```
