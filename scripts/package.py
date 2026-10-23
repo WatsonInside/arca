@@ -237,19 +237,27 @@ def make_pkg():
 
     res = os.path.join(BUILD, "pkgres")
     os.makedirs(res, exist_ok=True)
-    write_text(os.path.join(res, "welcome.html"), f"""
-<html><body style="font-family:-apple-system;font-size:13px;color:#222">
+    # Installer 对资源 HTML 的默认解码不是 UTF-8：光按 UTF-8 写文件，中文会乱码。
+    # 双保险：声明 charset，并把非 ASCII 转成数字实体，文件本体即纯 ASCII，
+    # 无论安装器按什么编码猜都不会错。
+    def write_installer_html(path, html):
+        body = (f'<html><head><meta http-equiv="Content-Type" '
+                f'content="text/html; charset=utf-8"></head>{html}</html>')
+        write_text(path, body.encode("ascii", "xmlcharrefreplace").decode("ascii"))
+
+    write_installer_html(os.path.join(res, "welcome.html"), f"""
+<body style="font-family:-apple-system;font-size:13px;color:#222">
 <h2 style="margin:0 0 6px">安装 {APP} {VERSION}</h2>
 <p>{APP} 是一个本地运行的压缩 / 解压工具：ZIP、7Z、RAR 解压，AES-256 加密，可分卷。</p>
 <p style="color:#666">安装位置：/Applications。所有文件处理都在本机完成，不会联网。</p>
-</body></html>""")
-    write_text(os.path.join(res, "conclusion.html"), f"""
-<html><body style="font-family:-apple-system;font-size:13px;color:#222">
+</body>""")
+    write_installer_html(os.path.join(res, "conclusion.html"), f"""
+<body style="font-family:-apple-system;font-size:13px;color:#222">
 <h2 style="margin:0 0 6px">装好了</h2>
 <p>打开「应用程序」里的 <b>{APP}</b>。首次启动时如果系统提示“无法验证开发者”，
 请右键点击图标 → 打开，或在「系统设置 → 隐私与安全性」里允许。</p>
 <p style="color:#666">内置 7-Zip 引擎，无需额外安装任何组件。</p>
-</body></html>""")
+</body>""")
     lic = os.path.join(ROOT, "vendor", "7-Zip-License.txt")
     if os.path.exists(lic):
         shutil.copy2(lic, os.path.join(res, "license.txt"))
