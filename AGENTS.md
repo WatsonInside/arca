@@ -78,3 +78,5 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 3. 相关套件单跑
 4. 交给用户确认后 → `make test` 全量 → bump 版本（src/arca/util.py APP_VERSION）
    → bundle + package + publish（README 徽章自动同步）→ **经用户确认后**再推 tag/Release。
+5. 发布产物就绪后，**把本地链接直接贴给用户供本机测试**（Markdown 链接）：
+   安装包 `dist/Arca-<版本>.dmg`、免装直开 `release/Arca.app`。

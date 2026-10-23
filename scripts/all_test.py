@@ -192,7 +192,7 @@ def main():
                              ("inspect-cache", "inspect_cache_test"), ("zip-inspect", "zip_inspect_test"),
                              ("extract-list", "extract_list_test"), ("concurrency", "concurrency_test"),
                              ("keyring", "keyring_test"), ("progress", "progress_test"), ("appupdate", "appupdate_test"),
-                             ("zip-password", "zip_password_test")]:
+                             ("zip-password", "zip_password_test"), ("stats", "stats_test")]:
             runner.run(name, PY + [f"scripts/{script}.py"])
         try:
             with headless(runner) as port:

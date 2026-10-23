@@ -39,6 +39,7 @@ from WebKit import (
 from . import engine as eng
 from . import integration
 from . import server as srv
+from . import stats
 from . import util
 from .settings import Settings
 
@@ -1302,6 +1303,7 @@ def run(argv):
     ctx.window = None
     server = srv.Server(ctx)
     server.start()
+    stats.maybe_ping(settings, headless)
     url = f"http://127.0.0.1:{server.port}/index.html?t={ctx.token}"
 
     info = {"port": server.port, "token": ctx.token}

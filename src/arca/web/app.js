@@ -1882,7 +1882,11 @@ async function openSettings(focus) {
           </div>
         </div>
         <details class="sheet-fold">
-          <summary>${icon('i-chevron')}<span>更新来源与组件</span><span class="fold-hint">GitHub 仓库 · zstd · PAR2</span></summary>
+          <summary>${icon('i-chevron')}<span>更新来源与隐私</span><span class="fold-hint">匿名统计 · GitHub · 组件</span></summary>
+          <div class="sheet-row">
+            <label>匿名使用统计<small>安装与每日首次启动各发一条匿名记录，不含任何个人数据</small></label>
+            <button class="toggle" id="set-stats" role="switch" aria-label="匿名使用统计" aria-checked="${s.anonymousStats === false ? 'false' : 'true'}"></button>
+          </div>
           <div class="sheet-row">
             <label>更新来源<small>owner/repo，留空关闭应用更新</small></label>
             <input class="input" id="set-app-repo" aria-label="应用更新 GitHub 仓库" value="${esc(s.appUpdateRepo || '')}" placeholder="owner/repo" style="width:180px">
@@ -1989,6 +1993,11 @@ async function openSettings(focus) {
     const next = e.currentTarget.getAttribute('aria-checked') !== 'true';
     e.currentTarget.setAttribute('aria-checked', String(next));
     patchSettings({ suppressSound: !next });
+  };
+  $('#set-stats', back).onclick = (e) => {
+    const next = e.currentTarget.getAttribute('aria-checked') !== 'true';
+    e.currentTarget.setAttribute('aria-checked', String(next));
+    patchSettings({ anonymousStats: next });
   };
   // ---------------------------------------------------- Finder 集成
   const svcFormat = $('#set-svc-format', back);
