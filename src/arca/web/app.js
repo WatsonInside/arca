@@ -2279,6 +2279,12 @@ function openEngineUpdate(info, opts) {
 }
 
 /** Shared dialog for application, engine and component updates. */
+/** Jobs write files; swapping the bundle or an engine under them leaves a
+ *  half-written archive. The server refuses as well — this is the fast path. */
+function jobsBusy() {
+  return (state.jobs || []).some((j) => j.status === 'running' || j.status === 'queued');
+}
+
 function openUpdateSheet(info, opts) {
   if (!info) return;
   const cur = info.currentVersion || (typeof info.current === 'string' ? info.current : '') || '?';
@@ -2467,6 +2473,7 @@ function openUpdateSheet(info, opts) {
 
   go.onclick = async () => {
     if (busy) return;
+    if (jobsBusy()) { toast('有任务正在进行，完成后再更新', 'err'); return; }
     const inst = opts.id === '7zz'
       ? ((state.update && state.update.install) || {})
       : ((state.componentInstall && state.componentInstall[opts.id]) || {});

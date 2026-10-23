@@ -158,8 +158,11 @@ def main():
     port, token = ports["port"], ports["token"]
 
     # a clean slate: no skip flag, and no stale check cache
+    # Engine check on, app check off: this suite drives the engine dialog and a
+    # second launch-time sheet would sit on top of it.
     api(port, token, "/settings", {"patch": {"engineSkipVersion": "",
                                              "checkEngineUpdates": True,
+                                             "checkAppUpdates": False,
                                              "engineSnoozeVersion": "",
                                              "engineSnoozeUntil": 0}})
     meta = api(port, token, "/engine/update?refresh=1")["update"]

@@ -191,7 +191,11 @@ def main():
     # The engine-update dialog opens by itself on launch when a newer 7-Zip
     # exists; it would sit on top of everything this script clicks.
     orig_check = api(port, token, "/meta")["settings"].get("checkEngineUpdates", True)
-    api(port, token, "/settings", {"patch": {"checkEngineUpdates": False}})
+    orig_appcheck = api(port, token, "/meta")["settings"].get("checkAppUpdates", True)
+    # The app-update dialog is the other launch-time sheet: once a newer
+    # release exists on GitHub it would cover the same clicks.
+    api(port, token, "/settings", {"patch": {"checkEngineUpdates": False,
+                                            "checkAppUpdates": False}})
     files, arch = seed()
     api(port, token, "/jobs/clear", {})
 
@@ -707,7 +711,8 @@ def main():
     finally:
         try:
             api(port, token, "/settings", {"patch": {"appearance": orig_theme,
-                                                     "checkEngineUpdates": orig_check}})
+                                                     "checkEngineUpdates": orig_check,
+                                                     "checkAppUpdates": orig_appcheck}})
         except Exception:
             pass
         ws.close()

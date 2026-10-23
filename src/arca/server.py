@@ -136,6 +136,19 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, message: str, code: int = 400):
         self._json({"ok": False, "error": message}, code)
 
+    def _busy(self, action: str):
+        """Refuse an update while a job is writing files.
+
+        Replacing the bundle (or the engines it spawns) under a running job
+        kills the worker mid-write and leaves a half-written archive behind.
+        """
+        manager = getattr(self.ctx, "manager", None)
+        active = manager.active_count() if manager is not None else 0
+        if active:
+            self._err(f"还有 {active} 个任务正在进行，完成后才能{action}", 409)
+            return True
+        return False
+
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -277,11 +290,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "settings": ctx.settings.all(),
                                    "savedPasswords": ctx.saved_passwords.summary()})
             if path == "/api/appupdate/apply":
+                if self._busy("更新"):
+                    return
                 return self._json({"ok": True, "install": ctx.app_updater.apply(body.get("version"))})
             if path == "/api/appupdate/dismiss":
                 ctx.app_updater.dismiss(body.get("version"))
                 return self._json({"ok": True})
             if path == "/api/appupdate/restart":
+                if self._busy("重启"):
+                    return
                 return self._json(ctx.app_updater.relaunch())
             if path == "/api/engine/update/apply":
                 return self._engine_apply(body)
@@ -381,6 +398,8 @@ class Handler(BaseHTTPRequestHandler):
         check, so a crafted call cannot point the updater at another host.
         """
         ctx = self.ctx
+        if self._busy("更新引擎"):
+            return
         wanted = str(body.get("version") or "")
         info = updates.check(ctx.engine, force=False)
         if not info.get("ok"):
@@ -435,6 +454,8 @@ class Handler(BaseHTTPRequestHandler):
     def _component_apply(self, body: dict):
         """Start the build/download the user confirmed in the dialog."""
         ctx = self.ctx
+        if self._busy("替换组件"):
+            return
         cid = str(body.get("id") or "")
         wanted = str(body.get("version") or "")
         info = components.check(cid, ctx.engine, force=False)

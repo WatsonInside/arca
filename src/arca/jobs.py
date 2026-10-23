@@ -155,6 +155,13 @@ class JobManager:
             if job_id in self.order:
                 self.order.remove(job_id)
 
+    def active_count(self) -> int:
+        """Jobs that would be damaged by replacing the app or its engines."""
+        with self._cv:
+            return sum(1 for jid in self.order
+                       if self.jobs.get(jid) and self.jobs[jid].to_dict()["status"]
+                       in ("queued", "running"))
+
     def clear_finished(self) -> None:
         with self._cv:
             for jid in list(self.order):
