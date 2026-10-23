@@ -194,6 +194,12 @@ def main():
     print("\n[3] 分卷归档（读取）")
     from split_fixtures import FIXTURES, generate
     split_payloads = generate(engine.zz)
+    # §2.2.3 加固锁：外置卷会实时产生 AppleDouble `._*`，它会被分卷枚举
+    # 计入并让"文件数=3"类断言随机翻红（复核基线两项失败即此）。生成器
+    # 已双向清理，这里锁住"清理必须始终生效"。
+    check("分卷夹具目录无 AppleDouble 残留",
+          not [p.name for p in FIXTURES.glob("._*")],
+          str([p.name for p in FIXTURES.glob("._*")]))
     for fmt in ("zip", "7z"):
         fixture = str(FIXTURES / f"sample.{fmt}.001")
         parts = list(FIXTURES.glob(f"sample.{fmt}.*"))

@@ -33,6 +33,10 @@ def api(port, token, path, body=None):
 
 
 def seed_demo():
+    # 截图必须可复现（复核 S3）：复用旧 DEMO 会让压缩目标名逐次唯一化
+    # （“季度素材备份 2/3/…”），任务页与侧栏截图每跑一遍就变。全量重建。
+    import shutil
+    shutil.rmtree(DEMO, ignore_errors=True)
     src = os.path.join(DEMO, "素材")
     os.makedirs(os.path.join(src, "设计稿"), exist_ok=True)
     os.makedirs(os.path.join(src, "文档"), exist_ok=True)
@@ -43,11 +47,16 @@ def seed_demo():
         "文档/接口约定.pdf": 420_000,
         "交付清单.txt": 3_200,
     }
+    # 固定源文件 mtime：归档条目时间继承它，解压页“修改时间”列才能逐轮一致。
+    FIXED_MTIME = 1790000000
     for name, size in files.items():
         p = os.path.join(src, name)
-        if not os.path.exists(p):
-            with open(p, "wb") as fh:
-                fh.write(os.urandom(size))
+        with open(p, "wb") as fh:
+            fh.write(os.urandom(size))
+        os.utime(p, (FIXED_MTIME, FIXED_MTIME))
+    # 目录条目同样固定：tar/7z 会把它们作为独立条目记录 mtime。
+    for d in (src, os.path.join(src, "设计稿"), os.path.join(src, "文档")):
+        os.utime(d, (FIXED_MTIME, FIXED_MTIME))
     # a real archive to open in the extract view
     arch = os.path.join(DEMO, "季度归档.7z")
     if not os.path.exists(arch):

@@ -59,6 +59,7 @@ def client_tests(tmp: str) -> None:
     os.environ["HOME"] = tmp
     state_path = os.path.join(tmp, "Library", "Application Support", "Arca", "stats.json")
     recorder = _Recorder()
+    real_send = appstats._send
     appstats._send = lambda event, iid: recorder.sent.append(event)
     appstats.threading = types.SimpleNamespace(Thread=_FakeThread)
 
@@ -92,6 +93,30 @@ def client_tests(tmp: str) -> None:
           + "/" + appstats._platform() + "/" + "a" * 32, url)
     check("路径段消毒", appstats._safe("../../etc p@ss") == "..-..-etc-p-ss",
           appstats._safe("../../etc p@ss"))
+
+    # ---- 零请求的网络层计数（复核 Q3：不能只靠状态文件推断）----
+    # 把 urlopen 整个换成本地计数器，未选择/拒绝路径连网络调用都不允许发生。
+    calls = []
+    appstats._send = real_send   # 还原真实发送路径，让计数器落在 urlopen 上
+    import urllib.request as real_urllib
+    appstats.urllib = types.SimpleNamespace(
+        request=types.SimpleNamespace(
+            Request=real_urllib.Request,
+            urlopen=lambda req, timeout=None: calls.append(req.full_url)))
+
+    os.environ["HOME"] = os.path.join(os.path.dirname(tmp), "home2")
+    state2 = os.path.join(os.environ["HOME"], "Library", "Application Support",
+                          "Arca", "stats.json")
+    appstats.maybe_ping(_settings(prompted=False))
+    appstats.maybe_ping(_settings(enabled=False))
+    appstats.maybe_ping(_settings(enabled=False), headless=True)
+    check("未选择与拒绝路径零网络调用", calls == [], str(calls))
+    appstats.maybe_ping(_settings())
+    check("允许路径恰好一次安装上报",
+          len(calls) == 1 and "/install/" in calls[0], str(calls))
+    check("允许路径状态文件落盘", os.path.isfile(state2))
+    appstats.maybe_ping(_settings())
+    check("同日二次启动不再请求", len(calls) == 1, str(calls))
 
 
 # ------------------------------------------------------------ aggregation
