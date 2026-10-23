@@ -253,11 +253,25 @@ def build_plist(contents):
     log("· Info.plist")
 
 
+MACHO_MAGIC = (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",   # Mach-O BE (32/64)
+               b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",   # Mach-O LE (32/64)
+               b"\xca\xfe\xba\xbe")                        # fat / universal
+
+
+def _needs_exec(path):
+    # 精确到文件本质而不是扩展名猜测：Mach-O（可执行、dylib、.so）与
+    # shebang 脚本才要执行位。python 运行时来源全是 -rwx------，若原样
+    # 保留执行位，几百个 .py/.pyc/.txt 都会带着 +x 装进用户机器。
+    with open(path, "rb") as fh:
+        head = fh.read(4)
+    return head in MACHO_MAGIC or head[:2] == b"#!"
+
+
 def normalize_modes():
     # pkg 安装会把属主换成 root 并原样保留文件权限：bundle 里任何 owner-only
     # 文件装完就成了「用户读不了、app 打不开」（dmg 拖装没这问题，Finder 把
     # 属主交给用户）。内嵌 python 运行时进 bundle 时就是 -rwx------，统一摊平
-    # 为全局可读：目录 755，可执行 755，其余 644。
+    # 为全局可读：目录 755，确属可执行的 755，其余 644。
     for root, dirs, files in os.walk(BUNDLE):
         for name in dirs:
             os.chmod(os.path.join(root, name), 0o755)
@@ -265,7 +279,7 @@ def normalize_modes():
             p = os.path.join(root, name)
             if os.path.islink(p):
                 continue
-            os.chmod(p, 0o755 if os.stat(p).st_mode & 0o111 else 0o644)
+            os.chmod(p, 0o755 if _needs_exec(p) else 0o644)
     os.chmod(BUNDLE, 0o755)
 
 
