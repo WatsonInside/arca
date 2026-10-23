@@ -1301,6 +1301,7 @@ def run(argv):
     ctx = srv.AppContext(engine, settings, _web_dir())
     ctx.argv_files = files
     ctx.window = None
+    ctx.headless = headless
     server = srv.Server(ctx)
     server.start()
     stats.maybe_ping(settings, headless)

@@ -39,8 +39,10 @@ DEFAULTS = {
     # Finder 右键压缩默认进压缩设置页（文件已就位，由用户确认格式后再开始）；
     # 想一键直压的用户在设置里打开这个开关。
     "serviceAutoStart": False,
-    # 匿名使用统计：默认开（安装/日活各一条 GET，不含个人数据），可随时关。
+    # 匿名使用统计：默认开（安装/日活各一条 GET），可随时关。首次启动先呈现
+    # 选择（允许/不允许），未做选择前不发送——statsPrompted 就是"已做过选择"。
     "anonymousStats": True,
+    "statsPrompted": False,
 }
 
 ALLOWED = set(DEFAULTS) - {"appSkipVersion"}

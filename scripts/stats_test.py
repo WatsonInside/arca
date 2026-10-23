@@ -45,8 +45,8 @@ class _FakeThread:
         self._target(*self._args)
 
 
-def _settings(enabled=True):
-    values = {"anonymousStats": enabled}
+def _settings(enabled=True, prompted=True):
+    values = {"anonymousStats": enabled, "statsPrompted": prompted}
 
     class S:
         def get(self, key, default=None):
@@ -67,6 +67,10 @@ def client_tests(tmp: str) -> None:
 
     appstats.maybe_ping(_settings(enabled=False))
     check("关闭后不上报", recorder.sent == [] and not os.path.exists(state_path))
+
+    appstats.maybe_ping(_settings(prompted=False))
+    check("首次未做选择不发送", recorder.sent == [] and not os.path.exists(state_path),
+          str(recorder.sent))
 
     appstats.maybe_ping(_settings())
     state = json.load(open(state_path, encoding="utf-8"))

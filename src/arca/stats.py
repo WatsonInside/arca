@@ -57,6 +57,10 @@ def maybe_ping(settings, headless: bool = False) -> None:
     """
     if headless or settings.get("anonymousStats") is False:
         return
+    # First launch shows an allow/deny notice; until a choice is made nothing
+    # leaves the machine ("refuse" then means zero requests, ever).
+    if not settings.get("statsPrompted"):
+        return
     today = time.strftime("%Y-%m-%d")
     state = util.read_json(_state_path(), {})
     first = not state.get("installedAt")

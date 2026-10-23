@@ -1297,3 +1297,27 @@ table.entries .dir { color: var(--accent); }
 .icon-btn:active, .file-x:active, .seg button:active { transform: scale(0.94); }
 .path-pill:active { transform: scale(0.99); }
 .nav-item:active, .adv-toggle:active { background: rgba(120, 120, 160, 0.14); }
+
+/* ---- first-launch stats notice -------------------------------------------
+   One-time allow/deny choice; equal visual weight on purpose (no primary).
+   Same column math as .topbar/.scroll so all edges line up. */
+.stats-notice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  margin: 0 max(34px, calc((100% - var(--col)) / 2)) 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+.stats-notice .sn-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.stats-notice .sn-body b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.stats-notice .sn-body span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.stats-notice .sn-actions { display: flex; gap: 8px; flex-shrink: 0; }

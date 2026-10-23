@@ -1884,9 +1884,18 @@ async function openSettings(focus) {
         <details class="sheet-fold">
           <summary>${icon('i-chevron')}<span>更新来源与隐私</span><span class="fold-hint">匿名统计 · GitHub · 组件</span></summary>
           <div class="sheet-row">
-            <label>匿名使用统计<small>安装与每日首次启动各发一条匿名记录，不含任何个人数据</small></label>
+            <label>匿名使用统计<small>安装与每日首次启动各发一条记录：随机标识、版本与系统信息；不涉及文件内容与密码</small></label>
             <button class="toggle" id="set-stats" role="switch" aria-label="匿名使用统计" aria-checked="${s.anonymousStats === false ? 'false' : 'true'}"></button>
           </div>
+          <details class="sheet-fold sn-fold">
+            <summary>${icon('i-chevron')}<span>查看发送内容</span><span class="fold-hint">字段示例</span></summary>
+            <div class="sheet-row">
+              <label>每条记录包含<small>事件类型（安装或每日活跃）· 日期 · App 版本 · macOS 大版本 · 芯片架构 · 随机安装标识（形如 a3f9…c2，首次启动时在本机生成）</small></label>
+            </div>
+            <div class="sheet-row" style="border-bottom:0;padding-bottom:0">
+              <label>不会发送<small>文件名与路径 · 归档内容 · 密码 · 压缩任务参数</small></label>
+            </div>
+          </details>
           <div class="sheet-row">
             <label>更新来源<small>owner/repo，留空关闭应用更新</small></label>
             <input class="input" id="set-app-repo" aria-label="应用更新 GitHub 仓库" value="${esc(s.appUpdateRepo || '')}" placeholder="owner/repo" style="width:180px">
@@ -2135,6 +2144,37 @@ async function openSettings(focus) {
       toast('已设置 RAR 命令行', 'ok');
     }
   };
+}
+
+/** First-launch stats notice: equal-weight allow/deny; nothing is sent until
+ *  a choice is made (see stats.maybe_ping's statsPrompted guard). */
+function renderStatsNotice() {
+  if (state.settings.statsPrompted !== false) return;
+  if (document.getElementById('stats-notice')) return;
+  const topbar = document.querySelector('.topbar');
+  if (!topbar) return;
+  const bar = document.createElement('div');
+  bar.className = 'stats-notice';
+  bar.id = 'stats-notice';
+  bar.setAttribute('role', 'note');
+  bar.setAttribute('aria-label', '匿名使用统计说明');
+  bar.innerHTML = `
+    <div class="sn-body">
+      <b>匿名使用统计</b>
+      <span>为估算安装量与活跃设备，Arca 会在首次启动与每日首次启动时各发送一条记录：本机保存的随机标识、App 版本、系统大版本与架构。不收集文件名、路径、压缩内容或密码。之后可随时在「设置 → 更新来源与隐私」中修改。</span>
+    </div>
+    <div class="sn-actions">
+      <button class="btn ghost" id="sn-allow">允许</button>
+      <button class="btn ghost" id="sn-deny">不允许</button>
+    </div>`;
+  topbar.after(bar);
+  const settle = async (allow) => {
+    for (const b of bar.querySelectorAll('button')) b.disabled = true;
+    await patchSettings({ statsPrompted: true, anonymousStats: allow });
+    bar.remove();
+  };
+  bar.querySelector('#sn-allow').onclick = () => settle(true);
+  bar.querySelector('#sn-deny').onclick = () => settle(false);
 }
 
 async function patchSettings(patch) {
@@ -2888,6 +2928,7 @@ async function init() {
   } catch (err) {
     toast('无法连接到本地服务：' + err.message, 'err');
   }
+  renderStatsNotice();
 
   applyTheme(state.settings.appearance || 'system');
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

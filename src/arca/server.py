@@ -17,6 +17,7 @@ from . import components
 from . import integration
 from . import par2 as par2_mod
 from . import appupdate
+from . import stats as stats_mod
 from . import updates
 from . import jobs as jobs_mod
 from . import util
@@ -64,6 +65,7 @@ class AppContext:
         self.token = util.app_support_dir() and _token()
         self.window = None
         self.bridge = None
+        self.headless = False
         self.inspect_cache: dict[str, dict] = {}
         self.inspect_lock = threading.RLock()
         self.installer = None          # updates.Installer while one is running
@@ -283,7 +285,10 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("clearSavedPasswords") is True:
                     if not ctx.saved_passwords.clear_all():
                         return self._err("部分密码未能清除，请检查钥匙串后重试")
-                ctx.settings.patch(body.get("patch") or body)
+                patch = body.get("patch") or {}
+                ctx.settings.patch(patch)
+                if "statsPrompted" in patch or "anonymousStats" in patch:
+                    stats_mod.maybe_ping(ctx.settings, getattr(ctx, "headless", False))
                 if body.get("patch", {}).get("rarPath") is not None or "rarPath" in body:
                     ctx.engine.rar = ctx.engine._find_rar(  # noqa: SLF001
                         ctx.settings.get("rarPath") or None)
