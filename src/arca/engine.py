@@ -55,8 +55,14 @@ SPLIT_PRESETS = [
 ]
 
 _META_PATTERNS = [".DS_Store", "__MACOSX", "._*", ".Spotlight-V100", ".Trashes", ".fseventsd"]
+# WinRAR 的 -x 掩码不认裸名字（-x.DS_Store 匹配不到任何东西，且不报错），
+# 必须带通配符才在任意层级生效。
+_RAR_XMASK = {".DS_Store": "*.DS_Store", "__MACOSX": "*__MACOSX*", "._*": "*._*",
+              ".Spotlight-V100": "*.Spotlight-V100", ".Trashes": "*.Trashes",
+              ".fseventsd": "*.fseventsd"}
 _ERROR_HINTS = {
     "Wrong password": "密码不正确",
+    "Incorrect password": "密码不正确",
     "Can't open as archive": "无法识别的压缩包格式",
     "Cannot open the file as archive": "无法识别的压缩包格式",
     "Headers Error": "文件头损坏，压缩包可能不完整",
@@ -468,8 +474,8 @@ class Engine:
                 cmd.append("-ms=on")
             else:
                 cmd.append("-ms=off")
-        else:
-            cmd.append("-trar")
+        # fmt == "rar" 不需要类型开关：走的是真正的 WinRAR CLI，压缩档类型
+        # 就是 rar 本身。`-trar` 是 7-Zip 语法，WinRAR 报 Unknown option。
 
         pw = opts.get("password") or ""
         if pw:
@@ -484,17 +490,22 @@ class Engine:
         if split > 0:
             if split < 64 * 1024:
                 raise EngineError("分卷大小不能小于 64 KB")
+            # -v<size>b 的 b 后缀（字节）两家都认。
             cmd.append("-v%db" % split)
 
         threads = opts.get("threads")
         if threads:
-            cmd.append("-mmt=%d" % int(threads))
+            # WinRAR 的线程开关是 -mt<N>；-mmt= 是 7-Zip 的。
+            cmd.append(("-mt%d" if fmt == "rar" else "-mmt=%d") % int(threads))
 
         if opts.get("excludeMeta", True):
             for pat in _META_PATTERNS:
-                cmd.append("-xr!" + pat)
+                # -xr! 是 7-Zip 的递归排除；WinRAR 用 -x<通配符掩码>。
+                cmd.append("-x" + _RAR_XMASK[pat] if fmt == "rar" else "-xr!" + pat)
 
-        cmd += ["-bsp1", "-bso0", "-bse1", "-y"]
+        # -bsp/-bso/-bse 是 7-Zip 的输出流开关；WinRAR 不认，它的等价物是
+        # -idc（免版权横幅）+ -idn（不逐个报名字，保留百分比进度）。
+        cmd += ["-idcn", "-y"] if fmt == "rar" else ["-bsp1", "-bso0", "-bse1", "-y"]
         cmd.append(opts["output"])
         cmd.append("--")
         cmd += opts["relative"]
@@ -503,12 +514,25 @@ class Engine:
     def build_extract_cmd(self, opts: dict) -> list[str]:
         entry = self.resolve(opts["archive"])
         fmt = (opts.get("format") or "").lower()
-        engine = self.rar if fmt.startswith("rar") and self.rar else self.zz
-        cmd = [engine, "x", entry, "-o" + opts["dest"]]
+        use_rar = fmt.startswith("rar") and self.rar is not None
         pw = opts.get("password") or ""
+        mode = opts.get("overwrite") or "rename"
+        if use_rar:
+            # WinRAR 的目标目录是位置参数，且必须以路径分隔符结尾，否则
+            # 会被当成文件掩码；-o 家族是覆盖开关（7-Zip 才用 -o<目录> 与
+            # -ao*）。WinRAR 没有「仅更新」开关，newer 落到 -or（同样不
+            # 破坏既有文件）。
+            cmd = [self.rar, "x", entry]
+            if pw:
+                cmd.append("-p" + pw)
+            cmd.append({"overwrite": "-o+", "skip": "-o-",
+                        "rename": "-or", "newer": "-or"}.get(mode, "-or"))
+            cmd += ["-idcn", "-y"]
+            cmd.append(opts["dest"] + os.sep)
+            return cmd
+        cmd = [self.zz, "x", entry, "-o" + opts["dest"]]
         if pw:
             cmd.append("-p" + pw)
-        mode = opts.get("overwrite") or "rename"
         cmd.append({ "overwrite": "-aoa", "skip": "-aos",
                      "rename": "-aou", "newer": "-aot" }.get(mode, "-aou"))
         cmd += ["-bsp1", "-bso0", "-bse1", "-y"]

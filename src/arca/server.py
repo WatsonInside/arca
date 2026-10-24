@@ -217,6 +217,9 @@ class Handler(BaseHTTPRequestHandler):
                 item = dict(f)
                 if f["id"] == "rar":
                     item["create"] = bool(engine_info["rarEncode"])
+                    # 配好 WinRAR 后，静态的「创建需配置」就不再属实了。
+                    if item["create"]:
+                        item["hint"] = "老牌专有格式 · 老解压工具也能开"
                 if f["id"] == "tar.zst" and not engine_info["zstdPath"]:
                     item["create"] = False
                     item["hint"] = "需要 zstd 组件（设置 → 组件）"
