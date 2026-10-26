@@ -195,7 +195,8 @@ def main():
                              ("zip-password", "zip_password_test"), ("stats", "stats_test"),
                              ("jobwait", "jobwait_test"), ("menu-cleanup", "menu_cleanup_test"),
                              ("partial-extract", "partial_extract_test"),
-                             ("fuzz-soak", "fuzz_soak_test")]:
+                             ("fuzz-soak", "fuzz_soak_test"),
+                             ("interrupt-recovery", "interrupt_recovery_test")]:
             runner.run(name, PY + [f"scripts/{script}.py"])
         try:
             with headless(runner) as port:

@@ -294,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not record:
                     return self._err("重试信息已失效（应用重启后仅保留本次会话的任务）")
                 job = ctx.manager.jobs.get(jid)
-                if job is not None and job.to_dict()["status"] not in ("error", "canceled"):
+                if job is not None and job.to_dict()["status"] not in ("error", "cancelled"):
                     return self._err("只有失败或已取消的任务可以重试")
                 payload = dict(record["body"])
                 # 失败重试时目标目录若被用户占用，合并进同名目录继续，
@@ -695,7 +695,7 @@ class Handler(BaseHTTPRequestHandler):
             label = "压缩 " + os.path.basename(target)
             job = jobs_mod.Job("compress", label, subtitle=_join_inputs(inputs),
                                destPath=dest_dir, format=fmt.upper(), inputs=inputs,
-                               secrets=[pw])
+                               planned=target, secrets=[pw])
             task = jobs_mod.make_compress_task(self.ctx.manager, opts)
             engine = self.ctx.engine
             def prepared(job):
@@ -802,8 +802,9 @@ class Handler(BaseHTTPRequestHandler):
                 opts["entries"] = list(entries)
             label = "解压 " + os.path.basename(entry)
             job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
-                               srcPath=entry, destPath=dest, secrets=[password], bucket=dest_root,
-                               total=total, format=(info.get("label") or ""))
+                               srcPath=entry, destPath=dest, planned=dest,
+                               secrets=[password], bucket=dest_root, total=total,
+                               format=(info.get("label") or ""))
             remembered = (self.ctx.saved_passwords.remember(
                 entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
                           if body.get("remember") is True else False)
@@ -821,7 +822,8 @@ class Handler(BaseHTTPRequestHandler):
         entry = self.ctx.engine.resolve(path)
         password, saved = self._password(body, entry)
         job = jobs_mod.Job("test", "校验 " + os.path.basename(entry), secrets=[password],
-                           srcPath=entry, format=(body.get("info") or {}).get("label", ""))
+                           srcPath=entry, planned=entry,
+                           format=(body.get("info") or {}).get("label", ""))
         remembered = (self.ctx.saved_passwords.remember(
             entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
                       if body.get("remember") is True else False)

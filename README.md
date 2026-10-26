@@ -132,7 +132,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 发送；之后可随时在「设置 → 更新来源与隐私」中修改或查看发送内容。聚合口径与对外数据
 接口见 [docs/STATS-API.md](docs/STATS-API.md)。
 
-**质量门禁**（`scripts/all_test.py` 一条命令跑完，25 个套件）：
+**质量门禁**（`scripts/all_test.py` 一条命令跑完，26 个套件）：
 
 | 套件 | 覆盖 |
 | --- | --- |
@@ -142,6 +142,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 | stats 21 | 匿名统计客户端状态机与日志聚合口径 |
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
 | partial-extract 35 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |
+| interrupt-recovery 4 | 崩溃/中断后的状态、任务日志与回滚边界（真实 .app + 隔离 HOME） |
 | jobwait 7 / menu-cleanup 9 | 任务等待时序、测试收尾策略 |
 | compress-draft | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
 
@@ -160,13 +161,15 @@ Arca.app/Contents/
     └── vendor/                 7zz · zstd · par2（universal + 许可证）
 ```
 
-**已知限制**（完整 11 条在[工程笔记](docs/ENGINEERING-NOTES.md#已知限制)）
+**已知限制**（完整 12 条在[工程笔记](docs/ENGINEERING-NOTES.md#已知限制)）
 
 1. **未签名公证**：首次打开需右键"打开"一次。这也是 Touch ID 保护密码暂时不可用的原因
    （钥匙串 ACL 需要签名 entitlement）。
 2. **RAR 创建**依赖本机 WinRAR 命令行；解压开箱可用。
 3. **`.tar.zst` 不支持加密与分卷**：zstd 是流格式，需要保密或分卷请用 7Z / ZIP。
 4. **组件更新需要本机编译器**（Xcode Command Line Tools）：zstd 与 par2 在本机编译安装。
+5. **崩溃/中断不自动续传**：重开会把上次未完成的任务标成「中断」并说明产物可能不完整，
+   半成品保留；没有一键重试，需要时请重新发起。
 
 ---
 

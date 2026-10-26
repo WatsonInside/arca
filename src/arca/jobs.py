@@ -20,7 +20,7 @@ class Job:
                  "item", "speed", "eta", "total", "done", "outputs", "error",
                  "created", "started", "finished", "cancel", "result", "log",
                  "srcPath", "destPath", "format", "sizeText", "inputs", "bucket",
-                 "_lock", "_task", "_secrets")
+                 "planned", "_lock", "_task", "_secrets")
 
     def __init__(self, kind: str, title: str, **extra):
         self.id = uuid.uuid4().hex[:12]
@@ -47,6 +47,10 @@ class Job:
         self.destPath = extra.get("destPath", "")
         self.bucket = extra.get("bucket", "")
         self.format = extra.get("format", "")
+        # Where this job is expected to write (archive target / extract dest).
+        # Kept in the crash journal so an interrupted run can name its output
+        # without guessing from the (possibly missing) final outputs.
+        self.planned = extra.get("planned", "")
         self.sizeText = ""
         # Kept so a finished compression can be repeated from its context menu
         # without the user re-picking every file.
@@ -105,6 +109,17 @@ class JobManager:
         self._targets: dict[str, str] = {}
         self.history = util.read_json(util.state_path("history.json"), [])
         self.history = self.history[:40] if isinstance(self.history, list) else []
+        # In-flight journal: one small JSON per queued/running job, removed when
+        # the job lands on a terminal state.  On launch the leftovers can only
+        # belong to a previous process that died before it could clean up, so
+        # they are turned into visible "interrupted" records (never replayed).
+        self._pending_dir = util.state_path("pending-jobs")
+        self._pending_lock = threading.Lock()
+        try:
+            os.makedirs(self._pending_dir, exist_ok=True)
+        except OSError:
+            pass
+        self.interrupted = self._recover_interrupted()
         self._workers = [threading.Thread(target=self._loop, daemon=True)
                          for _ in range(2)]
         for worker in self._workers:
@@ -119,6 +134,7 @@ class JobManager:
             self.order.insert(0, job.id)
             self._q.append(job.id)
             job._task = task
+            self._journal_write(job)
             self._cv.notify_all()
         return job
 
@@ -177,6 +193,133 @@ class JobManager:
         if had_history:
             util.write_json(util.state_path("history.json"), [])
 
+    # ------------------------------------------------------- crash journal
+    def _journal_path(self, job_id: str) -> str:
+        return os.path.join(self._pending_dir, f"{job_id}.json")
+
+    def _journal_write(self, job: Job, **extra) -> None:
+        """Persist just enough to identify this task after an unclean exit.
+
+        Deliberately excludes passwords, request bodies and error text: the
+        journal is a local ownership marker, not a replay log.  Best-effort --
+        a read-only state dir must never stop a real job from running.
+        """
+        record = {
+            "id": job.id, "kind": job.kind, "title": job.title,
+            "subtitle": job.subtitle, "pid": os.getpid(),
+            "created": job.created, "srcPath": job.srcPath,
+            "destPath": job.destPath, "planned": job.planned,
+            "format": job.format, "total": job.total,
+            "bucket": job.bucket,
+        }
+        record.update(extra)
+        with self._pending_lock:
+            util.write_json(self._journal_path(job.id), record)
+
+    def journal_update(self, job: Job, **extra) -> None:
+        """Add facts only the running task knows (e.g. fresh vs merge dest)."""
+        with self._pending_lock:
+            path = self._journal_path(job.id)
+            record = util.read_json(path, None)
+            if isinstance(record, dict):
+                record.update(extra)
+                util.write_json(path, record)
+
+    def _forget_pending(self, job_id: str) -> None:
+        with self._pending_lock:
+            # The build volume materialises xattrs as AppleDouble sidecars, so
+            # removing only the JSON would leave one 4 KB "._<id>.json" per job.
+            for name in (f"{job_id}.json", f"._{job_id}.json"):
+                try:
+                    os.remove(os.path.join(self._pending_dir, name))
+                except OSError:
+                    pass
+
+    def pending_count(self) -> int:
+        try:
+            return len([name for name in os.listdir(self._pending_dir)
+                        if name.endswith(".json") and not name.startswith(".")])
+        except OSError:
+            return 0
+
+    def _recover_interrupted(self) -> list[dict]:
+        """Turn journal leftovers into visible history records, once.
+
+        A record whose owning pid is still alive is left alone: a second
+        instance must not declare another instance's live job interrupted.
+        Nothing on disk is deleted here -- the outputs are user-visible and
+        their completeness cannot be judged safely, so the record only states
+        what happened and where to look.
+        """
+        records = []
+        my_pid = os.getpid()
+        with self._pending_lock:
+            try:
+                names = sorted(os.listdir(self._pending_dir))
+            except OSError:
+                return []
+            for name in names:
+                if name.startswith(".") or not name.endswith(".json"):
+                    continue
+                path = os.path.join(self._pending_dir, name)
+                record = util.read_json(path, None)
+                if isinstance(record, dict) and record.get("id"):
+                    pid = record.get("pid")
+                    if isinstance(pid, int) and pid != my_pid and _pid_alive(pid):
+                        continue          # owned by a live instance: keep
+                try:
+                    os.remove(path)       # consumed even if unusable
+                    os.remove(os.path.join(self._pending_dir,
+                                           "." + os.path.basename(path)))
+                except OSError:
+                    pass
+                if isinstance(record, dict) and record.get("id"):
+                    records.append(record)
+            # Drop sidecars orphaned by an older crash (no matching JSON left).
+            for name in names:
+                if not name.startswith("._") or not name.endswith(".json"):
+                    continue
+                if not os.path.exists(os.path.join(self._pending_dir, name[2:])):
+                    try:
+                        os.remove(os.path.join(self._pending_dir, name))
+                    except OSError:
+                        pass
+        if not records:
+            return []
+        recovered = []
+        with self._cv:
+            known = {item.get("id") for item in self.history
+                     if isinstance(item, dict)}
+            now = time.time()
+            for record in sorted(records, key=lambda r: r.get("created") or 0):
+                job_id = record["id"]
+                if job_id in known:
+                    continue              # it actually finished before the crash
+                mode = record.get("mode") or ""
+                item = {
+                    "id": job_id,
+                    "kind": record.get("kind") or "extract",
+                    "title": record.get("title") or "未完成任务",
+                    "subtitle": record.get("subtitle") or "",
+                    "finished": record.get("created") or now,
+                    "outputs": [record["planned"]] if record.get("planned") else [],
+                    "srcPath": record.get("srcPath") or "",
+                    "destPath": record.get("destPath") or "",
+                    "format": record.get("format") or "",
+                    "sizeText": "",
+                    "status": "interrupted",
+                    "result": {"interrupted": True, "mode": mode,
+                               "expected": int(record.get("total") or 0)},
+                    "note": _interrupted_note(mode),
+                    "recoveredAt": now,
+                }
+                self.history.insert(0, item)
+                recovered.append(item)
+            if recovered:
+                self.history = self.history[:40]
+                util.write_json(util.state_path("history.json"), self.history)
+        return recovered
+
     # ------------------------------------------------------------------ worker
     def _loop(self):
         while True:
@@ -193,6 +336,7 @@ class JobManager:
                     job.update(status="cancelled", phase="已取消", finished=time.time())
                     self._buckets.pop(jid)
                     self._targets.pop(jid, None)
+                    self._forget_pending(jid)
                     self._cv.notify_all()
                     continue
                 self._busy.add(bucket)
@@ -219,6 +363,7 @@ class JobManager:
                 try:
                     self._record(job)
                 finally:
+                    self._forget_pending(jid)
                     with self._cv:
                         self._busy.remove(bucket)
                         self._buckets.pop(jid, None)
@@ -240,6 +385,29 @@ class JobManager:
 
 
 # ------------------------------------------------------------------ task makers
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _interrupted_note(mode: str) -> str:
+    """One plain sentence per ownership case; never claims more than we know."""
+    if mode == "merge":
+        return ("上次任务在应用退出时中断：合并目标里可能留下本次新增的未完成文件，"
+                "产物可能不完整；既有文件没有被主动删除，但被覆盖过的同名旧文件能否"
+                "恢复不作保证。")
+    if mode == "fresh":
+        return ("上次任务在应用退出时中断：目标目录里的文件可能没写完或缺少条目"
+                "（产物可能不完整），应用没有删除它们；确认不需要后可手动清理。")
+    return ("上次任务在应用退出时中断：输出可能不完整，应用没有删除任何文件，"
+            "请检查任务对应的输出位置。")
+
+
 def make_compress_task(mgr: JobManager, opts: dict):
     def task(job: Job):
         inputs = [p for p in opts["inputs"] if os.path.exists(p)]
@@ -396,6 +564,9 @@ def make_extract_task(mgr: JobManager, opts: dict):
         dest = opts["dest"]
         entries = opts.get("entries") or None
         fresh = not os.path.isdir(dest)          # did we create this folder?
+        # Record ownership semantics before any write: after a crash the next
+        # launch can say whether existing files were supposed to be preserved.
+        mgr.journal_update(job, mode="fresh" if fresh else "merge")
         # Merge destinations cannot be rmtree'd on rollback: pre-existing files
         # and other tasks' outputs must survive.  Snapshot the tree first, then
         # delete only paths that appeared during this job (and empty directories

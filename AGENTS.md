@@ -29,7 +29,7 @@ Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Pyth
 ## 常用命令（等价 Makefile）
 
 ```bash
-make test          # 全量门禁（25 套件，~3-5 分钟，发布前必须过）
+make test          # 全量门禁（26 套件，~3 分钟，发布前必须过）
 make test-fast     # node --check + design_audit + selftest + progress（快速反馈）
 make audit         # 设计规则确定性检查（0 = 干净）
 make bundle        # 组装 release/Arca.app
@@ -56,7 +56,9 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 - **设置页必须一屏可见**（`.sheet-body` 不滚动）且至少 2 个 `.sheet-fold`——menu_test 有断言。
 - **沙箱限制**：从 /Applications 复制 .app 会大量 `Operation not permitted`；`ps` 部分参数被禁。
 - 改 `src/arca` 后要同步到测试包：`cp -R src/arca build/Arca-test.app/Contents/Resources/app/arca`
-  （先删旧的）。
+  （先删旧的）。`scripts/interrupt_recovery_test.py` 会自己同步。
+- 长时 soak 用 `--soak-seconds 1800` 以上（默认短冒烟仍在 `make test` 里，别把长跑接进去）：
+  `build/venv/bin/python -S -E -B scripts/fuzz_soak_test.py --soak-seconds 2100 --heartbeat 30 --json build/soak-<ts>.json`。
 - README 徽章/示例文件名的版本号由 `scripts/publish.py` 自动同步，不要手改。
 
 ## 测试矩阵速查
@@ -72,6 +74,7 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 | compress-scan / compress-space / zip-* / inspect-* / extract-list / concurrency | 各子域 |
 | jobwait / menu-cleanup | 任务等待时序、menu 收尾策略（mock） |
 | partial-extract 35 / fuzz-soak 6 | A1 选择性解压与异常回滚、损坏/截断/穿越/低磁盘/有界 soak |
+| interrupt-recovery 4 | 崩溃/中断后状态、任务日志、merge 回滚边界（真实 .app + 隔离 HOME） |
 | compress-draft / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
 
 ## 修改后的标准流程

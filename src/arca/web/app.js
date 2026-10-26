@@ -1157,6 +1157,7 @@ function historyPath(item) {
 }
 
 function historyLabel(item) {
+  if (item.status === 'interrupted') return '中断';
   return item.status === 'done' ? '已完成' : item.status === 'error' ? '失败' : '已取消';
 }
 
@@ -1168,14 +1169,17 @@ function renderHistory(list) {
   list.innerHTML = history.length ? `${history.map((item) => {
     const path = historyPath(item);
     // The right-hand column already says 已完成/失败/已取消, so the subtitle must
-    // not repeat it: fall back to the archive type instead.
-    const result = item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷`
-      : item.sizeText || item.format || '—';
+    // not repeat it: fall back to the archive type instead.  An interrupted
+    // record carries its own explanation (which files may be incomplete).
+    const interrupted = item.status === 'interrupted';
+    const result = interrupted ? '应用退出时未完成 · 产物可能不完整'
+      : item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷`
+        : item.sizeText || item.format || '—';
     const reveal = path ? `<button class="icon-btn" data-reveal="${esc(path)}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>` : '';
-    return `<div class="job history-item" data-history="${esc(item.id)}">
+    return `<div class="job history-item" data-history="${esc(item.id)}"${interrupted ? ` title="${esc(item.note || '')}"` : ''}>
       <div class="job-ico ${esc(item.status || 'done')}">${icon(KIND_ICON[item.kind] || 'i-box')}</div>
       <div class="job-main"><div class="job-top"><b>${esc(item.title || '历史任务')}</b></div>
-      <div class="job-sub">${esc(fmtDate(item.finished))}<span class="sep">·</span>${esc(result)}</div></div>
+      <div class="job-sub">${interrupted ? '' : `${esc(fmtDate(item.finished))}<span class="sep">·</span>`}${esc(result)}</div></div>
       <div class="job-actions"><span class="pct">${esc(historyLabel(item))}</span>${reveal}</div>
     </div>`;
   }).join('')}` : '';
@@ -3463,6 +3467,12 @@ async function init() {
     const meta = await api('/meta');
     state.meta = meta;
     state.history = meta.history || [];
+    const interrupted = state.history.filter((item) => item.status === 'interrupted');
+    if (interrupted.length) {
+      // Fail-visible on boot: the journal recorded that a task did not finish,
+      // and its partial output was left in place on purpose.
+      setTimeout(() => toast(`上次退出时有 ${interrupted.length} 个任务中断，产物可能不完整（见任务页）`, 'info', 'i-alert'), 400);
+    }
     state.settings = meta.settings || {};
     homeDir = meta.home || '';
     $('#engine-ver').textContent = `v${meta.engine.engineVersion} · 内置`;
