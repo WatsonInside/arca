@@ -20,15 +20,19 @@ What it covers, and why each check exists
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+import warnings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -133,6 +137,193 @@ def flip_byte(path, offset):
         old = fh.read(1)
         fh.seek(offset)
         fh.write(bytes([old[0] ^ 0xFF]))
+
+
+# ------------------------------------------------- zstd child resource checks
+def _resource_warnings(call):
+    """Run `call`, return (value, ResourceWarning messages) after a few GCs."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        value = call()
+        for _ in range(3):
+            gc.collect()
+    return value, [str(item.message) for item in caught
+                   if issubclass(item.category, ResourceWarning)]
+
+
+def _recording_popen(created):
+    real = subprocess.Popen
+
+    def spawn(*args, **kwargs):
+        proc = real(*args, **kwargs)
+        created.append(proc)
+        return proc
+    return spawn
+
+
+def _child_fully_reaped(proc):
+    streams = [getattr(proc, name, None) for name in ("stdin", "stdout", "stderr")]
+    return (proc.poll() is not None
+            and all(stream is None or stream.closed for stream in streams))
+
+
+class _PoisonClose:
+    """Stream proxy whose close() succeeds then raises: teardown errors must not
+    replace the exception that triggered teardown."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    @property
+    def closed(self):
+        return self.stream.closed
+
+    def read(self, *args, **kwargs):
+        return self.stream.read(*args, **kwargs)
+
+    def close(self):
+        self.stream.close()
+        raise RuntimeError("cleanup close must not mask the original exception")
+
+
+def _zst_resource_checks(tmp, binary):
+    from unittest.mock import patch
+    from arca import zst
+
+    root = os.path.join(tmp, "zst-resource")
+    os.makedirs(root, exist_ok=True)
+    source = os.path.join(root, "source.txt")
+    payload = b"resource probe payload\n" * 1000
+    with open(source, "wb") as fh:
+        fh.write(payload)
+
+    tree = os.path.join(root, "tree")
+    os.makedirs(os.path.join(tree, "nested"))
+    with open(os.path.join(tree, "a.txt"), "wb") as fh:
+        fh.write(b"alpha" * 1000)
+    with open(os.path.join(tree, "nested", "b.bin"), "wb") as fh:
+        fh.write(b"beta" * 1000)
+
+    tar_zst = os.path.join(root, "created.tar.zst")
+    value, warns = _resource_warnings(lambda: zst.compress(
+        [tree], root, tar_zst, level=1, threads=1))
+    check("创建 .tar.zst 无 ResourceWarning", warns == [], str(warns[:2]))
+    check("创建 .tar.zst 产物有效",
+          value.get("files") == 2 and os.path.getsize(tar_zst) > 0,
+          f"files={value.get('files')} bytes={os.path.getsize(tar_zst) if os.path.exists(tar_zst) else 0}")
+
+    bare = os.path.join(root, "source.txt.zst")
+    subprocess.run([binary, "-q", "-o", bare, source],
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.PIPE, check=True)
+    single_out = os.path.join(root, "single-out")
+    _, warns = _resource_warnings(lambda: zst.extract(bare, single_out))
+    check("裸 .zst 解压无 ResourceWarning", warns == [], str(warns[:2]))
+    extracted = os.path.join(single_out, "source.txt")
+    check("裸 .zst 解压内容正确",
+          os.path.isfile(extracted) and open(extracted, "rb").read() == payload)
+
+    info, warns = _resource_warnings(lambda: zst.listing(tar_zst))
+    check("TAR.ZST 列举无 ResourceWarning", warns == [], str(warns[:2]))
+    check("TAR.ZST 列举条目正确",
+          {e["path"] for e in info.get("entries", [])}
+          == {"tree", "tree/a.txt", "tree/nested", "tree/nested/b.bin"},
+          str([e["path"] for e in info.get("entries", [])]))
+    tar_out = os.path.join(root, "tar-out")
+    _, warns = _resource_warnings(lambda: zst.extract(tar_zst, tar_out))
+    check("TAR.ZST 解压无 ResourceWarning", warns == [], str(warns[:2]))
+    check("TAR.ZST 解压内容正确",
+          open(os.path.join(tar_out, "tree", "a.txt"), "rb").read()
+          == b"alpha" * 1000
+          and open(os.path.join(tar_out, "tree", "nested", "b.bin"), "rb").read()
+          == b"beta" * 1000)
+
+    # --- cancel: child must be dead and all pipes closed before the error
+    # propagates; nothing should be reported as an unclosed ResourceWarning.
+    for label, call in (
+            ("取消压缩", lambda cancel: zst.compress(
+                [tree], root, os.path.join(root, "cancel.tar.zst"),
+                level=1, threads=1, cancel=cancel)),
+            ("取消裸解压", lambda cancel: zst.extract(
+                bare, os.path.join(root, "cancel-out"), cancel=cancel))):
+        cancel = threading.Event()
+        cancel.set()
+        created = []
+        with patch.object(zst.subprocess, "Popen",
+                          side_effect=_recording_popen(created)), \
+                warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            try:
+                call(cancel)
+            except zst.ZstdError as exc:
+                message = str(exc)
+            else:
+                message = ""
+            for _ in range(3):
+                gc.collect()
+        leftover = [str(item.message) for item in caught
+                    if issubclass(item.category, ResourceWarning)]
+        check(f"{label}返回取消错误", "已取消" in message, message)
+        check(f"{label}子进程已 reap 且 pipe 已关闭",
+              bool(created) and _child_fully_reaped(created[-1]),
+              f"procs={len(created)}")
+        check(f"{label}无 ResourceWarning", leftover == [], str(leftover[:2]))
+
+    # --- injected original exception must survive teardown
+    created = []
+    with patch.object(zst.subprocess, "Popen",
+                      side_effect=_recording_popen(created)), \
+            patch.object(zst.tarfile, "open",
+                         side_effect=RuntimeError("injected original")), \
+            warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        try:
+            zst.compress([tree], root, os.path.join(root, "exception.tar.zst"),
+                         level=1, threads=1)
+        except RuntimeError as exc:
+            propagated = str(exc)
+        else:
+            propagated = ""
+        for _ in range(3):
+            gc.collect()
+    leftover = [str(item.message) for item in caught
+                if issubclass(item.category, ResourceWarning)]
+    check("压缩异常保留原始异常", propagated == "injected original", propagated)
+    check("压缩异常子进程已 reap 且 pipe 已关闭",
+          bool(created) and _child_fully_reaped(created[-1]),
+          f"procs={len(created)}")
+    check("压缩异常无 ResourceWarning", leftover == [], str(leftover[:2]))
+
+    # --- teardown close() raising must not replace the original exception
+    created = []
+    real_popen = subprocess.Popen
+
+    def poisoned_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        created.append(proc)
+        if proc.stderr is not None:
+            proc.stderr = _PoisonClose(proc.stderr)
+        return proc
+
+    with patch.object(zst.subprocess, "Popen", side_effect=poisoned_popen), \
+            patch.object(zst.tarfile, "open",
+                         side_effect=ValueError("injected original")), \
+            warnings.catch_warnings(record=True):
+        warnings.simplefilter("always", ResourceWarning)
+        try:
+            zst.compress([tree], root, os.path.join(root, "poison.tar.zst"),
+                         level=1, threads=1)
+        except ValueError as exc:
+            poison_propagated = str(exc)
+        else:
+            poison_propagated = ""
+        for _ in range(3):
+            gc.collect()
+    check("收尾异常不覆盖原始异常",
+          poison_propagated == "injected original", poison_propagated)
+    check("收尾异常后子进程已 reap 且 pipe 已关闭",
+          bool(created) and _child_fully_reaped(created[-1]),
+          f"procs={len(created)}")
 
 
 def main():
@@ -446,6 +637,13 @@ def main():
           and upd.get("latest") == "1.5.7", str(upd))
     check("check 返回 available 布尔", isinstance(upd.get("available"), bool),
           f'available={upd.get("available")}')
+
+    # --------------------------------------- [7] ZST 子进程资源收尾
+    print("\n[7] ZST 子进程资源收尾")
+    if not engine.zstd:
+        skip("ZST resource lifecycle", "zstd 组件缺失")
+    else:
+        _zst_resource_checks(tmp, engine.zstd)
 
     print("\n" + "-" * 62)
     print(f"通过 {len(PASS)} · 失败 {len(FAIL)} · 跳过 {len(SKIP)}")

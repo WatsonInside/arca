@@ -3,7 +3,7 @@
 
 PY := build/venv/bin/python -S -E
 
-.PHONY: setup thirdparty bundle package publish test test-fast audit shots brief stats
+.PHONY: setup thirdparty bundle package publish test test-fast verify audit shots brief stats
 
 # 给接手的 AI Agent 用：一条命令自述家门 + 健康检查
 brief:
@@ -46,6 +46,19 @@ test-fast:
 
 audit:
 	$(PY) scripts/design_audit.py
+
+# Local pre-flight gate: static checks + the fast, dependency-light suites.
+# `make test` remains the authoritative full signal; this only shortens the
+# loop while editing.  No CI claim is made from this target.
+verify:
+	node --check src/arca/web/app.js
+	$(PY) scripts/design_audit.py
+	$(PY) scripts/jobwait_test.py
+	$(PY) scripts/menu_cleanup_test.py
+	$(PY) scripts/partial_extract_test.py
+	$(PY) scripts/fuzz_soak_test.py
+	$(PY) scripts/zip_inspect_test.py
+	$(PY) scripts/extract_list_test.py
 
 shots:
 	$(PY) scripts/shots.py

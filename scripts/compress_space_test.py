@@ -168,5 +168,72 @@ class CompressSpaceTests(unittest.TestCase):
         remove.assert_not_called()
 
 
+class UniqueTargetTests(unittest.TestCase):
+    """唯一化命名：复合扩展名 .tar.zst 必须整体对待（回归锁）。
+
+    此前 os.path.splitext 只剥出 ".zst"，冲突时产出 "x.tar 2.zst"；
+    正确结果是把序号插在整个 ".tar.zst" 之前。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        self.addCleanup(self.tmp.cleanup)
+        self.dest = Path(self.tmp.name)
+        self.handler = object.__new__(server.Handler)
+        self.handler.ctx = SimpleNamespace(
+            engine=SimpleNamespace(resolve=lambda p: p, parts=lambda p: []),
+            manager=Mock(_cv=server.threading.Condition(), _targets={}))
+
+    def unique(self, name):
+        target = str(self.dest / name)
+        return self.handler._unique_target(target, archive=True)
+
+    def place(self, name):
+        (self.dest / name).write_bytes(b"x")
+
+    def test_tar_zst_conflict_increments_before_full_extension(self):
+        self.place("name.tar.zst")
+        first = self.unique("name.tar.zst")
+        self.assertEqual(os.path.basename(first), "name 2.tar.zst")
+        self.place("name 2.tar.zst")
+        second = self.unique("name.tar.zst")
+        self.assertEqual(os.path.basename(second), "name 3.tar.zst")
+
+    def test_tar_zst_skips_numbers_taken_by_par2_sidecars(self):
+        # 真实 PAR2 sidecar 占用（此前误用普通归档文件冒充）：归档本体不在，
+        # 但 .par2 索引与 .vol 数据档在——复用该名字会让新档与旧恢复记录
+        # 纠缠，必须跳到下一个序号。占用判定走 par2.recovery_files 的真实
+        # 匹配规则（<stem>.par2 与 <stem>.vol*）。
+        self.place("name.tar.zst")
+        self.place("name 2.tar.zst.par2")
+        self.place("name 2.tar.zst.vol1-2.par2")
+        suggestion = self.unique("name.tar.zst")
+        self.assertEqual(os.path.basename(suggestion), "name 3.tar.zst")
+
+    def test_tar_zst_skips_numbers_taken_by_split_volumes(self):
+        # 分卷占用走 engine.parts：任一分卷（.001…）存在即视为该名字已占用。
+        self.handler.ctx.engine.parts = (
+            lambda p: [p + ".001"] if os.path.basename(p) == "name 2.tar.zst" else [])
+        self.place("name.tar.zst")
+        suggestion = self.unique("name.tar.zst")
+        self.assertEqual(os.path.basename(suggestion), "name 3.tar.zst")
+
+    def test_other_formats_keep_existing_behavior(self):
+        for name, expected in (("a.zip", "a 2.zip"), ("a.7z", "a 2.7z"),
+                               ("a.rar", "a 2.rar"), ("a.zst", "a 2.zst"),
+                               ("a.tar", "a 2.tar")):
+            with self.subTest(name=name):
+                self.place(name)
+                got = self.unique(name)
+                self.assertEqual(os.path.basename(got), expected)
+
+    def test_active_job_target_blocks_name_even_without_file(self):
+        # 目录里还没有这个文件，但一个活动任务已把它登记为目标：同样算冲突。
+        self.handler.ctx.manager._targets["job-1"] = os.path.realpath(
+            self.dest / "busy.tar.zst")
+        got = self.unique("busy.tar.zst")
+        self.assertEqual(os.path.basename(got), "busy 2.tar.zst")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

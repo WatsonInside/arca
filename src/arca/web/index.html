@@ -363,13 +363,18 @@
             </div>
             <div class="table-wrap" id="x-table-wrap">
               <table class="entries">
-                <thead><tr><th>名称</th><th style="width:96px;text-align:right">大小</th><th style="width:150px">修改时间</th></tr></thead>
+                <thead><tr><th class="selcol"><input type="checkbox" id="x-sel-all" aria-label="全选所有条目"></th><th>名称</th><th style="width:96px;text-align:right">大小</th><th style="width:150px">修改时间</th></tr></thead>
                 <tbody id="x-table"></tbody>
               </table>
             </div>
             <div class="card-foot" id="x-table-foot">
               <span class="opt-hint" id="x-more" role="status" aria-live="polite"></span>
               <button class="btn quiet hidden" id="x-show-all" aria-controls="x-table">显示全部</button>
+              <span class="sel-tools hidden" id="x-sel-tools">
+                <span class="opt-hint" id="x-sel-count" role="status" aria-live="polite">已选 0 项</span>
+                <button class="btn quiet" id="x-sel-all-btn">全选</button>
+                <button class="btn quiet" id="x-sel-clear">清空选择</button>
+              </span>
               <span class="spacer" style="flex:1"></span>
               <span class="opt-hint" id="x-ratio"></span>
             </div>

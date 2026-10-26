@@ -80,6 +80,7 @@ build/venv/bin/python scripts/package.py            # 生成 dist/*.dmg 与 *.pk
 | --- | --- | --- | --- | --- |
 | 创建 | ✅ lzma2 / lzma / ppmd / bzip2 | ✅ deflate / bzip2 / lzma | ✅ zstd 1–19 | ⚠️ 需 WinRAR 命令行 |
 | 解压 | ✅ | ✅ | ✅（含裸 `.zst`） | ✅ RAR4 / RAR5 |
+| 只解压选中条目 | ✅ | ✅ | — 单流格式 | ✅ 有引擎时 |
 | 分卷 | ✅ | ✅ | — 流格式不支持 | ✅ 有引擎时 |
 | AES-256 加密 | ✅ | ✅ | — 流格式不支持 | ✅ 有引擎时 |
 | 隐藏文件名 | ✅ `-mhe=on` | — 格式限制 | — | ✅ 有引擎时 |
@@ -92,6 +93,7 @@ build/venv/bin/python scripts/package.py            # 生成 dist/*.dmg 与 *.pk
 
 几个用起来才会注意到的细节：
 
+- **只解压需要的条目**：解压页可勾选 / 全选 / 清空，主按钮写明「解压选中 N 项」；默认全选仍是整包解压，7Z / ZIP / RAR 支持，单流 `.zst` 会明确禁用而不是偷偷整包解。
 - **危险信息走行内**，不弹窗。加密归档读不到目录时，列表区直接写"目录已加密 — 输入密码后可查看内容"。
 - **压缩前先算空间**，解压前也算一遍，装不下就当场说，不会写到一半失败。
 - **GBK 文件名自动修复**：Windows 打的 ZIP 解出来不再是乱码。
@@ -130,15 +132,18 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 发送；之后可随时在「设置 → 更新来源与隐私」中修改或查看发送内容。聚合口径与对外数据
 接口见 [docs/STATS-API.md](docs/STATS-API.md)。
 
-**质量门禁**（`scripts/all_test.py` 一条命令跑完，19 个套件）：
+**质量门禁**（`scripts/all_test.py` 一条命令跑完，25 个套件）：
 
 | 套件 | 覆盖 |
 | --- | --- |
-| integrity 78 / selftest 38 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
-| menu 82 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
-| keyring 53 / appupdate 26 | 钥匙串与触控 ID、应用自更新 |
-| stats 17 | 匿名统计客户端状态机与日志聚合口径 |
+| integrity 97 / selftest 39 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
+| menu 103 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
+| keyring 53 / appupdate 29 | 钥匙串与触控 ID、应用自更新 |
+| stats 21 | 匿名统计客户端状态机与日志聚合口径 |
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
+| partial-extract 35 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |
+| jobwait 7 / menu-cleanup 9 | 任务等待时序、测试收尾策略 |
+| compress-draft | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
 
 ```
 Arca.app/Contents/

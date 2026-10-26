@@ -78,7 +78,7 @@
 
 ### 引擎更新
 
-应用内置的是 7-Zip 通用二进制（当前 23.01）。7-Zip 一年要发好几个版本，其中不少是压缩包解析器的  
+应用内置的是 7-Zip 通用二进制（当前 26.05）。7-Zip 一年要发好几个版本，其中不少是压缩包解析器的
 安全修复——而解析的对象正是别人发来的文件。所以启动时会静默查一次官网，有新版本就弹一个中文说明，  
 由用户自己决定装不装。
 
@@ -114,7 +114,8 @@
 
 界面截图见 `assets/shots/`（`01-compress` `02-extract` `03-queue` `04-dark` `05-settings`  
 `06-menu-light` `07-menu-dark` `08-update` `09-update-done` `10-zst` `11-par2-menu`  
-`12-components` `13-finder` `14-default`；01-07、10-14 由 `make shots` 生成，  
+`12-components` `13-finder` `14-default` `15-extract-select`（A1 选中态）；
+01-07、10-15 由 `make shots` 生成，
 08-09 由更新套件生成——目录里不再保留没有生成者的历史截图）。
 
 `make shots` 是**确定性**的，前置条件与保证：演示素材由 `seed_demo` 每次全量重建  
@@ -290,12 +291,92 @@ zstd 与 PAR2 都是外部程序，同样会出新版本（par2cmdline 从 0.8.1
 - **实色背景**。早期版本用了半透明 + `backdrop-filter`，菜单会透出背后卡片的边缘，视觉上像是  
   下半部分被提亮了；改成实色后深浅两套都是均匀的。
 
+### 部分解压（A1，2026-10-26）
+
+解压页的条目表现在有选择列：默认全选，行内 checkbox 与行焦点 + `Space` 都能切换，
+「全选 / 清空选择 / 已选 N 项」在表格页脚；主按钮是「解压选中 N 项」，0 项时禁用。
+默认全选时前端**不传 entries**，仍然走原来的整包解压请求，所以既有行为与性能不变。
+
+API（`/api/extract` 的可选 `entries`）规则，服务端在创建任务前校验并返回干净的 400：
+
+- `entries` 必须是字符串数组；**空数组 ≠ 整包解压**（400）。
+- 只接受 `/` 分隔；拒绝绝对路径、盘符、空段、`.`、`..`、NUL/控制字符、结尾斜杠、
+  通配符 `* ? [ ]`、以 `-`/`@` 开头（7-Zip 会当开关或列表文件）、重复项。
+- 名称必须真实存在于归档；校验用 `engine.list_entries()`（完整列表，不受 UI 800 条
+  上限影响），不是用显示列表反推。
+- 目录条目表示"该目录整棵子树"（7-Zip / WinRAR 自身对目录名的规则）。
+- 前端选择模型是**树形三态**：目录行代表整棵子树；勾选/取消目录会联动全部后代，
+  子项变动会向上刷新祖先（全选中变勾选、部分选中变半选、全取消变未选）。发送请求时
+  只包含「未选中的文件」和「完整选中的最上层目录」；**半选目录绝不作为 entries 下发**，
+  否则引擎会把父目录整棵子树重新展开，刚刚取消的子项就会被解压出来。
+- API 仍保留"显式目录=subtree"契约；若调用方同时传祖先目录和其后代，服务端在成员
+  校验后剪掉被祖先覆盖的冗余后代（不是重复项错误），结果与只传祖先一致。
+
+实现路径：
+
+- 7z / ZIP / 分卷：`engine.build_extract_cmd` 在 7zz 参数末尾追加 `-- name…`；
+  RAR（有 WinRAR 命令行时）按 `rar x archive [files…] dest/` 的顺序把条目放在目标目录
+  之前。本条只有 fake CLI 的 argv 单元测试，**没有真实 WinRAR 端到端验证**。
+- zipfix（GBK/非 UTF-8 ZIP）：选择的解码名通过 `zipfix.plan` 的 raw→decoded 映射过滤，
+  不会把显示名直接当 CLI 参数。
+- 加密 ZIP：名称可见时先校验成员、任务内用密码解压；错误密码让任务失败并按既有回滚
+  规则处理。加密文件名的 7z 在错误密码下列不出目录，会在建任务前返回 400。
+- `tar.zst` / 裸 `.zst`：单流格式，明确禁用选择并在接口与界面都说明，不会偷偷整包解压。
+- 条目超过 UI 上限（800）时同样禁用选择，避免"全选"只覆盖可见子集。
+
+重试沿用 `_record_retry` 保存的原始请求体，因此 entries 语义自动保留。
+
+**合并目录的回滚（2026-10-26 返修，2026-10-27 补齐异常路径）**：解压任务开始时先对
+已存在的目标目录做一次文件/目录清单快照；失败、取消或 engine.run() 抛异常时，fresh
+目标目录整体删除；merge 目标只删除快照之后新出现的文件与本次新建的空目录，既有文件、
+其他任务产物和无法归属的路径一律保留。普通 7zz 路径与 zstd/zipfix 共用同一个
+guarded 回滚；engine.run 在读出/回调异常时会先 terminate/kill + wait 子进程、关闭
+stdout，再让 jobs 回滚，避免子进程在回滚后继续写盘。
+不做 mtime 盲删，也不对既有目录 rmtree。被 overwrite 模式覆盖的旧文件内容**不保证
+恢复**（没有备份），这一点不在界面或文档里夸大。
+
+### 压缩草稿生命周期与竞态防护（2026-10-27）
+
+压缩页的草稿（待压缩列表、名称、保存位置）与后端请求是异步的，这里修过三类真实的
+时序缺陷，全部由 `scripts/compress_draft_test.py`（真实 headless UI → HTTP → 磁盘）
+与 `scripts/jobwait_test.py`（mock 单元）锁住：
+
+- **草稿生命周期**：`/api/compress` 接受后立即清掉**已提交**的那批输入（回到压缩页
+  不能再显示旧的「待压缩」）；请求失败则原样保留。`draftVersion` 是页面生命周期的
+  代际号：提交时对当前代快照，响应只作用于同代草稿——在途期间的新增输入、新名称、
+  新目录不会被旧响应清掉。自动名称/目录始终跟随当前输入重算；用户手动改过的名称
+  （`touchedName`）与显式选择的目录（`destTouched`）只在当前草稿内存活，
+  清空列表、「再次压缩这些文件」都产生全新草稿，不泄漏上一份的目录。
+- **nameRev / destRev ABA**：旧实现把代际标记重置为 0，一个更早提交的快照可能与
+  新草稿的手动编辑「相等」，旧响应于是覆盖了新名称/新目录。修复后 `nameRev`/
+  `destRev` 只单调递增、永不归零，快照比较天然免疫同值复用（ABA）。
+- **preflight 乱序**：`/api/preflight` 的响应按 `preflightSeq` 序号与请求键
+  （目录 + 名称 + 格式）双重校验，过期响应（含错误响应）直接丢弃，不再覆盖新草稿的
+  输出路径显示；同代内仅切换格式产生的旧响应同样被拒绝。
+- **cancelled 双 l**：后端任务终态一直是 `cancelled`（拼写见 `src/arca/jobs.py`），
+  前端有三处比较写成了 `canceled`，导致取消的任务卡不折叠、最近任务不显示——
+  已统一，`jobwait.py` 的终态识别以双 l 为准。
+
+### 性能基准与可靠性工具（P2，2026-10-26）
+
+- `scripts/benchmark.py`：固定合成语料的 quick/full 两档基准，输出原始 JSON（机器、
+  参数、字节数、耗时、CPU、峰值内存）。数据与 B4 判定见 [`docs/BENCHMARK.md`](BENCHMARK.md)。
+- `scripts/benchmark_ui.py`：真实 headless Chrome 里测 200→800 行的渲染路径。
+  2026-10-27 实测主动展开 800 行 111.7 ms（低于 300 ms 交互预算），故 B4 保持现状并
+  记录触发条件（更早轮次的 155.7 / 245.7 ms 已不再作为结论引用）。
+- `scripts/fuzz_soak_test.py`：有界、隔离的损坏/截断归档、路径穿越、超长名、mock 低磁盘、
+  被杀引擎进程、3 轮 compress→extract 哈希闭环冒烟；长 soak 未运行，输出会打印实际轮数。
+- `make verify`：`node --check` + design_audit + 关键快速套件的本地预检；`make test`
+  仍是完整可信信号，本仓库没有远端 CI 运行记录。
+- 诊断包本轮**未实现**（现有日志不等于诊断包）；`make verify` 也不代表 CI 已通过。
+
 ## 能力矩阵
 
 | 能力    | 7Z                                              | ZIP                               | TAR.ZST           | RAR                |
 | ----- | ----------------------------------------------- | --------------------------------- | ----------------- | ------------------ |
 | 创建    | ✅（lzma2 / lzma / ppmd / bzip2 / deflate / copy） | ✅（deflate / bzip2 / lzma，AES-256） | ✅（zstd 1–19，速度最快） | ⚠️ 需系统装 WinRAR 命令行 |
 | 解压    | ✅                                               | ✅                                 | ✅（含裸 `.zst` 单文件）  | ✅（RAR4 / RAR5）     |
+| 只解压选中条目 | ✅                                          | ✅                                 | — 单流格式              | ✅（有引擎时）            |
 | 分卷    | ✅ `-v`                                          | ✅ `-v`                            | — 流格式不支持          | ✅（有引擎时）            |
 | 加密内容  | ✅ AES-256                                       | ✅ AES-256                         | — 流格式不支持          | ✅（有引擎时）            |
 | 加密文件名 | ✅ `-mhe=on`                                     | — 格式限制                            | —                 | ✅（有引擎时）            |
@@ -330,11 +411,11 @@ Arca.app/Contents/
 │       ├── arca/zst.py        .tar.zst 全链路：流式 tar → zstd stdin、从 tar 索引读目录
 │       ├── arca/par2.py       PAR2 生成 / 校验 / 修复（含块数控制与输出解析）
 │       ├── arca/components.py 组件登记表 + 更新器（archive / source 两种安装策略）
-│       ├── arca/jobs.py       单 worker 任务队列（可取消、进度/速度/ETA、历史持久化）
+│       ├── arca/jobs.py       双 worker 任务队列（目录分桶：同桶串行、异桶并行；可取消、进度/速度/ETA、历史持久化）
 │       ├── arca/server.py     本地 HTTP API（127.0.0.1 随机端口 + X-Arca-Token 鉴权）
 │       ├── arca/app.py        NSWindow / WKWebView / 原生面板 / 菜单 / 主题
 │       ├── arca/web/          纯前端（无框架：app.js 状态渲染 + menu.js 右键菜单）
-│       └── vendor/            7zz 23.01 · zstd 1.5.7 · par2 0.8.1（均为 universal 二进制 + 许可证）
+│       └── vendor/            7zz 26.05 · zstd 1.5.7 · par2 1.4.0（均为 universal 二进制 + 许可证）
 ```
 
 几个关键决定：
@@ -354,36 +435,35 @@ Arca.app/Contents/
 
 ## 自测结果
 
-`scripts/selftest.py` 端到端跑真实进程与真实文件：
+`scripts/selftest.py` 端到端跑真实进程与真实文件（2026-10-27 实跑）：
 
 ```
-engine      : 7-Zip 23.01  (vendor/7zz)
+engine      : 7-Zip 26.05  (vendor/7zz)
 rar encoder : RAR 只读（未安装 WinRAR 命令行）
 
 [1] ZIP · AES-256 加密     11 项全通过（含逐字节比对、错误密码报错）
 [2] 7Z · 加密文件名         5 项全通过（无密码不可见目录、有密码可列出、校验通过）
-[3] 分卷归档（读取）        5 项全通过（5 卷 ZIP 识别/解压、7z 分卷成员数正确）
-[4] 分卷创建               3 项全通过（3 个分卷、以 .001 开头、可重新读取）
+[3] 分卷归档（读取）       13 项全通过（ZIP/7Z 分卷识别/完整性/解压/逐字节一致，无 AppleDouble 残留）
+[4] 分卷创建                3 项全通过（3 个分卷、以 .001 开头、可重新读取）
 [5] 取消任务               ok（状态为 cancelled，半成品被清理）
-[6] RAR 读取               skip —— 样本下载 404 / TLS 中断，无网可离线样本
-[7] 边界情况               4 项全通过
+[6] RAR 读取                2 项全通过（vendored seektest.rar，SHA256 校验后解压）
+[7] 边界情况                4 项全通过
 
-通过 29   失败 0   跳过 1
+通过 39   失败 0   跳过 0
 ```
-
-（跳过的是 RAR 解压：本机取不到官方样本，引擎具备解码能力但与本次改动无关。）
-
 
 `[4]` 早前版本被跳过，是因为构建脚本当时把 `TMPDIR` 指到了被策略拦截的位置；用受控的
 临时目录重跑后，7-Zip 写完 `.tmp` 分卷再重命名的完整流程走通，3 个分卷均能重新读取。
 
-唯一被跳过的是 **RAR 解压**：`7zz i` 显示内置 `Rar`(40301–40303) 与 `Rar5`(40305)
-解码器，引擎具备解码能力，只是本机取不到测试样本（属网络环境问题，与应用逻辑无关）。
+RAR 解压样本已本地 vendor 化（`tests/fixtures/seektest.rar`，2026-10-27，C2 项）：
+先校验 SHA256 再使用，下载仅作兜底；早期轮次因官方样本 404 / TLS 中断曾跳过该组，
+当前不再依赖外网。
 
-右键菜单、侧栏与设置面板共 82 项 UI 断言（`scripts/menu_test.py`，CDP 驱动真实页面、真实鼠标与键盘事件）：
+右键菜单、侧栏与设置面板共 103 项 UI 断言（`scripts/menu_test.py`，CDP 驱动真实页面、真实鼠标与键盘事件）：
 
 ```
-通过 82   失败 0            # + 提示通道统一 / pill 不重播 / 键盘连切 / RAR 跳转 / 侧栏最近任务
+通过 103   失败 0            # + 提示通道统一 / pill 不重播 / 键盘连切 / RAR 跳转 / 侧栏最近任务
+                             # + A1 嵌套选择/重选（三态目录行、半选不下发、焦点保持）
 ```
 
 引擎更新另有 25 项 UI 断言（`scripts/update_test.py`）；加 `--install` 会真的下载官方包、校验、
@@ -405,18 +485,20 @@ rar encoder : RAR 只读（未安装 WinRAR 命令行）
 `aria-label`、必须有 `:focus-visible` 与 reduced-motion 块）、数字字体、长文本重排、
 裸 z-index。当前 **0 findings**。
 
-`scripts/integrity_test.py` 专测新加的两个算法与 Finder 集成接口，75 项断言全部走真实二进制与真实文件：
+`scripts/integrity_test.py` 专测引擎链路与 Finder 集成接口，97 项断言全部走真实二进制与真实文件（2026-10-27 实跑）：
 
 ```
-[1] 元数据 · 格式能力位 · 组件注册    10 项（ZST 的 encrypt/split/method/solid 必须为 false）
-[2] TAR.ZST · 压缩 → 列举 → 解压      14 项（305 KB 包 → 解压后 305 KB 逐字节一致）
-[3] ZST · 单文件（无 tar 头）          7 项（识别为 ZST 而非 TAR.ZST）
-[4] PAR2 · 校验 → 损坏 → 修复         17 项（干净 → 损坏 1 字节 → 报可修复 → 修复 → 哈希复原）
-    [4b] PAR2 · 单卷模式（-n1）            7 项（只出 1 个卷文件、校验/损坏/修复闭环、API 传参）
-[5] Finder 集成                       13 项（服务状态、收件箱判定/排空/去重、默认打开方式 dry-run）
+[1] 元数据 · 格式能力位 · 组件注册    13 项（ZST 的 encrypt/split/method/solid 必须为 false）
+[2] TAR.ZST · 压缩 → 列举 → 解压     14 项（305 KB 包 → 解压后 305 KB 逐字节一致）
+[3] ZST · 单文件（无 tar 头）          6 项（识别为 ZST 而非 TAR.ZST）
+[4] PAR2 · 校验 → 损坏 → 修复         23 项（干净 → 损坏 1 字节 → 报可修复 → 修复 → 哈希复原；
+                                      含单卷模式（-n1）闭环与 API 传参）
+[5] Finder 集成                       16 项（服务状态、收件箱判定/排空/去重、默认打开方式 dry-run）
 [6] 组件接口                          6 项（未知组件被拒、7zz 的 reset 走引擎重置）
+[7] ZST 子进程资源收尾               19 项（正常/取消/注入异常路径下子进程被收尸且管道关闭、
+                                      无 ResourceWarning 泄漏、收尾异常不覆盖原始异常）
 
-通过 75   失败 0   跳过 0
+通过 97   失败 0   跳过 0
 ```
 
 PAR2 那段不是在验"文件生成了"，而是把闭环走完：`flip_byte()` 把归档中间一个字节取反，
@@ -504,8 +586,8 @@ build/venv/bin/python scripts/build_thirdparty.py # 从上游 tag 编译 vendor/
 build/venv/bin/python scripts/bundle.py      # 组装 release/Arca.app（或 ARCA_OUT=... 指定输出）
 build/venv/bin/python scripts/package.py     # 生成 dist/Arca-1.0.0.dmg 与 .pkg
 build/venv/bin/python scripts/selftest.py    # 端到端自测
-build/venv/bin/python scripts/integrity_test.py # zstd / PAR2（含单卷）/ Finder 集成 75 项断言
-build/venv/bin/python scripts/menu_test.py   # 右键菜单与设置面板 56 项 UI 断言（需先起 --headless 实例）
+build/venv/bin/python scripts/integrity_test.py # zstd / PAR2（含单卷）/ Finder 集成 97 项断言
+build/venv/bin/python scripts/menu_test.py   # 右键菜单与设置面板 103 项 UI 断言（需先起 --headless 实例）
 build/venv/bin/python scripts/update_test.py # 引擎更新 25 项 UI 断言（加 --install 走真实下载）
 build/venv/bin/python scripts/shots.py       # 通过 CDP 驱动真实 UI 截图
 build/venv/bin/python scripts/design_audit.py # 设计规则确定性检查（0=干净，2=有违规）

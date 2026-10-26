@@ -394,19 +394,31 @@ def make_extract_task(mgr: JobManager, opts: dict):
     def task(job: Job):
         entry = mgr.engine.resolve(opts["archive"])
         dest = opts["dest"]
+        entries = opts.get("entries") or None
         fresh = not os.path.isdir(dest)          # did we create this folder?
+        # Merge destinations cannot be rmtree'd on rollback: pre-existing files
+        # and other tasks' outputs must survive.  Snapshot the tree first, then
+        # delete only paths that appeared during this job (and empty directories
+        # this job created).  Buckets serialise jobs sharing a dest_root, so the
+        # diff is attributable to this task; external writers are out of scope.
+        before = None if fresh else _snapshot_tree(dest)
         os.makedirs(dest, exist_ok=True)
 
         def guarded(run):
-            # 失败与取消同策：只删除本次新建的目标目录——半成品或空壳留在
-            # 原地会挡住「重试」（重试会因同名文件夹被拒）。
+            # 失败与取消同策：fresh 删本次新建目录；merge 只清本次新增文件与
+            # 新建空目录，既有文件/其他任务产物保留。
             try:
                 return run()
             except Exception:
-                _rollback_extract(dest, fresh)
+                _rollback_extract(dest, fresh, before)
                 raise
 
         if zst.is_zstd(entry):
+            if entries:
+                # Server validates this before submitting; keep a defensive
+                # error so a direct job submission can never silently fall
+                # back to extracting the whole archive.
+                raise eng.EngineError("该格式不支持只解压选中项")
             return guarded(lambda: _extract_zstd(job, mgr, entry, dest, opts))
 
         # A Windows-made ZIP stores GBK names without the UTF-8 flag; 7-Zip
@@ -419,34 +431,40 @@ def make_extract_task(mgr: JobManager, opts: dict):
             except OSError:
                 plan = None
         if plan:
-            return guarded(lambda: _extract_zipfix(job, entry, dest, opts, plan, fresh))
+            return guarded(lambda: _extract_zipfix(job, entry, dest, opts, plan,
+                                                   fresh, entries))
 
-        cmd = mgr.engine.build_extract_cmd({**opts, "archive": entry})
-        total = int(opts.get("totalBytes") or 0)
-        before = _count_files(dest) if not fresh else 0
-        job.update(total=total, phase="正在解压")
+        def run_engine():
+            cmd = mgr.engine.build_extract_cmd({**opts, "archive": entry})
+            total = int(opts.get("totalBytes") or 0)
+            before_files = len(before[0]) if before else 0
+            job.update(total=total, phase="正在解压")
 
-        def on_progress(percent, line, speed):
-            if percent is None:
-                return
-            m = re.search(r"-\s+(.+)$", line)
-            job.progress(percent, m.group(1) if m else "", speed)
+            def on_progress(percent, line, speed):
+                if percent is None:
+                    return
+                m = re.search(r"-\s+(.+)$", line)
+                job.progress(percent, m.group(1) if m else "", speed)
 
-        code, log = mgr.engine.run(cmd, cwd=None, on_progress=on_progress,
-                                   cancel=job.cancel, total_bytes=total)
-        job.update(log=log[-4000:])
-        if job.cancel.is_set():
-            _rollback_extract(dest, fresh)
-            raise RuntimeError("已取消")
-        if code not in (0, 1):
-            _rollback_extract(dest, fresh)
-            raise eng.EngineError(eng.describe_error(log, code) or "解压失败")
-        written = max(0, _count_files(dest) - before)
-        job.update(outputs=[dest], destPath=dest, srcPath=entry,
-                   result={"dest": dest, "files": written,
-                           "warning": eng.describe_error(log, code) if code == 1 else ""},
-                   sizeText=util.human_size(total))
-        job.progress(100)
+            # If run() raises (read/callback/OSError), it has already reaped the
+            # child; guarded() below then applies the same rollback contract as
+            # the zstd/zipfix paths.
+            code, log = mgr.engine.run(cmd, cwd=None, on_progress=on_progress,
+                                       cancel=job.cancel, total_bytes=total)
+            job.update(log=log[-4000:])
+            if job.cancel.is_set():
+                raise RuntimeError("已取消")
+            if code not in (0, 1):
+                raise eng.EngineError(eng.describe_error(log, code) or "解压失败")
+            written = max(0, _count_files(dest) - before_files)
+            job.update(outputs=[dest], destPath=dest, srcPath=entry,
+                       result={"dest": dest, "files": written,
+                               **({"partial": len(entries)} if entries else {}),
+                               "warning": eng.describe_error(log, code) if code == 1 else ""},
+                       sizeText=util.human_size(total))
+            job.progress(100)
+
+        return guarded(run_engine)
     return task
 
 
@@ -454,20 +472,73 @@ def _count_files(root: str) -> int:
     return sum(len(f) for _r, _d, f in os.walk(root))
 
 
-def _rollback_extract(dest: str, fresh: bool) -> None:
-    """Cancelling should not leave half an extraction folder behind.
+def _snapshot_tree(root: str) -> tuple[set, set]:
+    """Relative file/dir inventory used to attribute merge-mode rollback."""
+    files, dirs = set(), set()
+    for base, names, filenames in os.walk(root):
+        rel_base = os.path.relpath(base, root)
+        for name in list(names):
+            full = os.path.join(base, name)
+            if os.path.islink(full):
+                # A symlink to a directory is walked as a dir name; treat it
+                # as a file so rollback unlinks it instead of rmdir'ing.
+                names.remove(name)
+                filenames.append(name)
+                continue
+            dirs.add(name if rel_base == "." else os.path.join(rel_base, name))
+        for name in filenames:
+            files.add(name if rel_base == "." else os.path.join(rel_base, name))
+    return files, dirs
 
-    Only a folder this job created is removed: merging into an existing one
-    cannot tell our files from the user's.
+
+def _rollback_extract(dest: str, fresh: bool, before=None) -> None:
+    """Roll back only what this job can claim.
+
+    fresh: the directory itself was created by this job -> remove all of it.
+    merge: keep every pre-existing path (and other tasks' outputs); delete only
+    files/dirs that appeared after `before` was taken.  A file overwritten by
+    the engine cannot be restored here and is deliberately left alone rather
+    than guessed at by mtime/inode heuristics.
     """
     if fresh:
         import shutil as _sh
         _sh.rmtree(dest, ignore_errors=True)
+        return
+    if before is None:
+        return
+    old_files, old_dirs = before
+    new_files, new_dirs = _snapshot_tree(dest)
+    for rel in sorted(new_files - old_files, reverse=True):
+        try:
+            os.unlink(os.path.join(dest, rel))
+        except OSError:
+            pass
+    for rel in sorted(new_dirs - old_dirs, key=lambda p: p.count(os.sep),
+                      reverse=True):
+        full = os.path.join(dest, rel)
+        try:
+            if os.path.islink(full):
+                os.unlink(full)
+            else:
+                os.rmdir(full)
+        except OSError:
+            pass
 
 
 def _extract_zipfix(job: Job, entry: str, dest: str, opts: dict,
-                    plan: dict, fresh: bool):
-    job.update(total=plan.get("bytes") or 0, phase="正在解压")
+                    plan: dict, fresh: bool, entries=None):
+    only = None
+    total = plan.get("bytes") or 0
+    if entries:
+        only = {str(name).rstrip("/") for name in entries}
+
+        def selected(name):
+            norm = name.rstrip("/")
+            return any(norm == sel or norm.startswith(sel + "/") for sel in only)
+
+        total = sum(e["size"] for e in plan["entries"]
+                    if not e["isDir"] and selected(e["path"])) or 0
+    job.update(total=total, phase="正在解压")
 
     def on_progress(pct, name):
         job.progress(pct, name)
@@ -475,18 +546,18 @@ def _extract_zipfix(job: Job, entry: str, dest: str, opts: dict,
     try:
         out = zipfix.extract(entry, dest, plan["names"],
                              overwrite=opts.get("overwrite") or "rename",
-                             on_progress=on_progress, cancel=job.cancel)
+                             on_progress=on_progress, cancel=job.cancel,
+                             only=only)
     except zipfix.ZipFixError as exc:
         if str(exc) == "已取消":
-            _rollback_extract(dest, fresh)
             raise RuntimeError("已取消")
         raise eng.EngineError(str(exc))
     if job.cancel.is_set():
-        _rollback_extract(dest, fresh)
         raise RuntimeError("已取消")
     job.update(outputs=[dest], destPath=dest, srcPath=entry,
                result={"dest": dest, "files": out["files"],
                        "bytes": out["bytes"],
+                       **({"partial": len(entries)} if entries else {}),
                        "renamed": plan.get("fixed"),
                        "encoding": plan.get("encoding")},
                sizeText=util.human_size(out["bytes"] or job.total))

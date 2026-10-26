@@ -29,7 +29,7 @@ Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Pyth
 ## 常用命令（等价 Makefile）
 
 ```bash
-make test          # 全量门禁（20 套件，~1-2 分钟，发布前必须过）
+make test          # 全量门禁（25 套件，~3-5 分钟，发布前必须过）
 make test-fast     # node --check + design_audit + selftest + progress（快速反馈）
 make audit         # 设计规则确定性检查（0 = 干净）
 make bundle        # 组装 release/Arca.app
@@ -63,13 +63,16 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 
 | 套件 | 测什么 |
 | --- | --- |
-| selftest 38 / integrity 78 | 引擎与组件、zstd/PAR2 全链路、Finder 集成 |
-| menu 82 | 右键菜单 + 设置面板真实 UI（CDP） |
+| selftest 39 / integrity 97 | 引擎与组件、zstd/PAR2 全链路、Finder 集成（含 zstd 子进程资源收尾） |
+| menu 103 | 右键菜单 + 设置面板 + A1 嵌套选择/重选真实 UI（CDP） |
 | acceptance 22 | HTTP 行为探针 |
 | progress 8 | 7-Zip 进度解析（退格符回归锁） |
 | keyring 53 / appupdate 29 | 钥匙串、应用自更新（含重启脚本） |
 | update 25 / update-long 27 | 引擎更新全流程（long 含真实下载） |
 | compress-scan / compress-space / zip-* / inspect-* / extract-list / concurrency | 各子域 |
+| jobwait / menu-cleanup | 任务等待时序、menu 收尾策略（mock） |
+| partial-extract 35 / fuzz-soak 6 | A1 选择性解压与异常回滚、损坏/截断/穿越/低磁盘/有界 soak |
+| compress-draft / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
 
 ## 修改后的标准流程
 

@@ -223,7 +223,7 @@ svg { stroke-width: 1.8; }
 .recent-ico svg { width: 13px; height: 13px; stroke-width: 2; }
 .recent-ico.done { color: var(--ok); }
 .recent-ico.error { color: var(--err); }
-.recent-ico.canceled { color: var(--ink-4); }
+.recent-ico.cancelled { color: var(--ink-4); }
 .recent-name {
   flex: 1; min-width: 0;
   font-size: 12px;
@@ -774,6 +774,18 @@ table.entries td.name {
 }
 table.entries td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.entries .dir { color: var(--accent); }
+table.entries thead th.selcol,
+table.entries tbody td.selcol { width: 30px; padding-right: 0; }
+table.entries.no-sel thead th.selcol,
+table.entries.no-sel tbody td.selcol { display: none; }
+table.entries tbody tr.is-selected td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+table.entries tbody tr.is-selected td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.row-sel {
+  width: 13px; height: 13px; margin: 0; padding: 0;
+  accent-color: var(--accent); cursor: pointer; vertical-align: -2px;
+}
+.sel-tools { display: flex; align-items: center; gap: 6px; }
+.sel-tools .btn { padding: 2px 8px; font-size: 11px; }
 .lock-ic { width: 11px; height: 11px; vertical-align: -1px; }
 
 /* --------------------------------------------------------------------- meta */

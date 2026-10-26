@@ -113,15 +113,30 @@ def _unique(path: str) -> str:
         i += 1
 
 
+def _selected(name: str, only: set[str] | None) -> bool:
+    """Partial extraction filter.  A selected directory pulls its subtree,
+    matching 7-Zip's own rule; selection names are the decoded (display) names
+    because that is what the user picked, while the archive is still read
+    through the raw-name → decoded-name map below."""
+    if only is None:
+        return True
+    norm = name.rstrip("/")
+    return any(norm == sel or norm.startswith(sel + "/") for sel in only)
+
+
 def extract(path: str, dest: str, names: dict, overwrite: str = "rename",
-            on_progress=None, cancel=None) -> dict:
+            on_progress=None, cancel=None, only=None) -> dict:
     out_files = 0
     out_bytes = 0
-    total = 0
+    wanted = None if only is None else {
+        str(sel).rstrip("/") for sel in only if str(sel).strip()}
     with zipfile.ZipFile(path) as zf:
         infos = zf.infolist()
-        total = sum(zi.file_size for zi in infos) or 1
-        for zi in infos:
+        todo = [zi for zi in infos
+                if _selected(names.get(zi.filename) or zi.filename, wanted)]
+        total = sum(zi.file_size for zi in todo
+                    if not (zi.is_dir() or (names.get(zi.filename) or zi.filename).endswith("/"))) or 1
+        for zi in todo:
             if cancel is not None and cancel.is_set():
                 raise ZipFixError("已取消")
             name = names.get(zi.filename) or zi.filename

@@ -146,11 +146,13 @@ const state = {
     splitId: 'none', splitBytes: 0, splitCustom: '',
     pw: '', encryptNames: true, excludeMeta: true, solid: true,
     par2: false, par2Pct: 5, par2Single: false,
-    dest: '', name: '', touchedName: false,
+    dest: '', name: '', touchedName: false, nameRev: 0,
+    destTouched: false, destRev: 0, draftVersion: 0, preflightSeq: 0,
     target: '', exists: false, busy: false,
   },
   x: { path: '', info: null, pw: '', remember: false, dest: '', autoFolder: true,
-       overwrite: 'rename', loading: false, error: '', expanded: false },
+       overwrite: 'rename', loading: false, error: '', expanded: false,
+       sel: new Set(), selAll: false, selTouched: false, selSupported: false },
   jobStatus: {},
   pollTimer: 0,
   update: null,        // last engine-update check
@@ -504,10 +506,17 @@ function renderCompress() {
     }
   }
 
-  // name & dest
-  if (!$('#c-name').value || !c.touchedName) {
-    $('#c-name').value = c.name || defaultArchiveName();
+  if (!has) {
+    c.target = '';
+    c.exists = false;
+    $('#c-outpath').textContent = '—';
   }
+
+  // name & dest: automatic values always follow the current inputs; a manual
+  // name / explicit destination lives only for this draft.
+  if (!c.destTouched) c.dest = defaultDestForItems(c.items);
+  if (!c.touchedName) c.name = defaultArchiveName();
+  $('#c-name').value = c.name || '';
   $('#c-dest-text').textContent = c.dest ? midEllipsis(shortPath(c.dest), 34) : '与源文件相同';
   $('#c-start').disabled = !has || c.busy;
   $('#c-outhint').textContent = c.busy ? '正在创建…'
@@ -548,6 +557,74 @@ function defaultArchiveName() {
   return n;
 }
 
+function defaultDestForItems(items) {
+  if (!items || !items.length) return '';
+  const dirs = new Set(items.map((i) => i.dir));
+  return dirs.size === 1 ? items[0].dir : '';
+}
+
+/** Draft-only fields never leak into the next task.  Format/level/password
+ *  are user preferences and survive; inputs, names, destinations do not. */
+function resetCompressDraft() {
+  const c = state.c;
+  c.items = [];
+  c.name = '';
+  c.touchedName = false;
+  // nameRev / destRev are page-lifetime monotonic stamps.  Resetting them to
+  // zero made an older submit snapshot compare equal to a brand-new draft's
+  // manual edits (ABA), so the old response could overwrite the new name/dest.
+  c.dest = '';
+  c.destTouched = false;
+  c.target = '';
+  c.exists = false;
+  c.draftVersion += 1;
+  const input = $('#c-name');
+  if (input) input.value = '';
+}
+
+function bumpDraft() {
+  state.c.draftVersion += 1;
+}
+
+/** Recompute the automatic fields that are not user-owned. */
+function syncAutoDraftFields() {
+  const c = state.c;
+  if (!c.destTouched) c.dest = defaultDestForItems(c.items);
+  if (!c.touchedName) {
+    c.name = defaultArchiveName();
+    const input = $('#c-name');
+    if (input) input.value = c.name;
+  }
+}
+
+/** Called after /api/compress accepted the request.
+ *
+ *  Normal case: the submitted draft is gone, so returning to the compress page
+ *  cannot show the old inputs as "待压缩".  If the user edited the draft while
+ *  the request was in flight, only the submitted inputs are removed; edits
+ *  made in the meantime (new inputs, a new manual name, a newly picked
+ *  destination) are preserved. */
+function settleSubmittedDraft(snapshot) {
+  const c = state.c;
+  if (c.draftVersion === snapshot.version) {
+    resetCompressDraft();
+    return;
+  }
+  const submitted = new Set(snapshot.paths);
+  c.items = c.items.filter((it) => !submitted.has(it.path));
+  if (c.nameRev === snapshot.nameRev) {
+    c.touchedName = false;
+    c.name = defaultArchiveName();
+  }
+  if (c.destRev === snapshot.destRev) {
+    c.destTouched = false;
+    c.dest = defaultDestForItems(c.items);
+  }
+  c.target = '';
+  c.exists = false;
+  c.draftVersion += 1;
+}
+
 function parseSizeInput(text) {
   const m = String(text || '').trim().toLowerCase().match(/^([\d.]+)\s*([kmgt]?)b?$/);
   if (!m) return 0;
@@ -555,20 +632,44 @@ function parseSizeInput(text) {
   return Math.round(parseFloat(m[1]) * mult);
 }
 
+function preflightKey() {
+  const c = state.c;
+  if (!c.items.length) return '';
+  return JSON.stringify([
+    c.dest || dirName(c.items[0].path),
+    $('#c-name').value || defaultArchiveName(),
+    c.format,
+  ]);
+}
+
 const refreshTarget = debounce(async () => {
   const c = state.c;
-  if (!c.items.length) { c.target = ''; $('#c-outpath').textContent = '—'; return; }
+  if (!c.items.length) {
+    // Invalidate in-flight preflights and clear the previous draft's path state.
+    c.preflightSeq += 1;
+    c.target = '';
+    c.exists = false;
+    $('#c-outpath').textContent = '—';
+    return;
+  }
+  const seq = ++c.preflightSeq;
+  const key = preflightKey();
   const dest = c.dest || dirName(c.items[0].path);
   const name = ($('#c-name').value || defaultArchiveName());
+  const format = c.format;
+  const current = () => seq === c.preflightSeq && key === preflightKey();
   try {
-    const r = await api('/preflight', { destDir: dest, name, format: c.format });
+    const r = await api('/preflight', { destDir: dest, name, format });
+    if (!current()) return;   // a newer draft / newer request owns the display
     c.target = r.target;
     c.exists = r.exists;
     $('#c-outpath').textContent = midEllipsis(shortPath(r.target), 56);
     $('#c-outhint').textContent = buildOutHint();
   } catch (err) {
+    if (!current()) return;   // stale errors must not overwrite the new draft
     c.target = '';
-    $('#c-outpath').textContent = midEllipsis(shortPath(join(dest, name + cFormatExt())), 56);
+    $('#c-outpath').textContent = midEllipsis(
+      shortPath(join(dest, name + cFormatExt())), 56);
   }
 }, 220);
 
@@ -577,6 +678,213 @@ function overHintText(mode) {
   if (mode === 'overwrite') return '同名旧文件会被替换';
   if (mode === 'skip') return '保留旧文件，对应的新文件不写入';
   return '保留旧文件，新解出的文件自动换名写入';
+}
+
+function normEntry(path) {
+  return String(path ?? '').replace(/\/+$/, '');
+}
+
+/** Partial extraction is per-entry. zstd is a single byte stream (a bare .zst
+ *  has exactly one output; a .tar.zst cannot seek), and the backend caps the
+ *  UI list at 800 rows -- in either case a selection cannot faithfully
+ *  represent "all", so the capability is explicitly disabled instead of
+ *  silently degrading to a whole-archive extract. */
+function partialSupported(info) {
+  if (!info) return false;
+  const type = String(info.type || '').toLowerCase();
+  if (type === 'zst' || type === 'tar.zst' || info.single) return false;
+  if (info.entriesTruncated) return false;
+  return (info.entries || []).length > 0;
+}
+
+function entryMap() {
+  const map = new Map();
+  ((state.x.info && state.x.info.entries) || []).forEach((e) => {
+    map.set(normEntry(e.path), e);
+  });
+  return map;
+}
+
+/** All entry paths under a directory entry (excluding the directory itself). */
+function descendantsOf(dir, map) {
+  const prefix = dir + '/';
+  const out = [];
+  map.forEach((_e, path) => { if (path.startsWith(prefix)) out.push(path); });
+  return out;
+}
+
+function isFullySelectedDir(dir, map) {
+  if (!state.x.sel.has(dir)) return false;
+  return descendantsOf(dir, map).every((p) => state.x.sel.has(p));
+}
+
+/** Keep the invariant "a directory is in `sel` iff its whole subtree is
+ *  selected".  Without it, sending the parent directory to the engine would
+ *  re-include a child the user explicitly unchecked. */
+function refreshAncestors(path) {
+  const map = entryMap();
+  let cur = path;
+  while (cur.includes('/')) {
+    cur = cur.slice(0, cur.lastIndexOf('/'));
+    const info = map.get(cur);
+    if (!info || !info.isDir) continue;
+    // Judge the directory by its descendants only.  If `cur` itself were in
+    // the "all selected" list, a half-selected parent (already removed from
+    // sel) could never be restored by re-checking its last missing child.
+    const descendants = descendantsOf(cur, map);
+    const full = descendants.length
+      ? descendants.every((p) => state.x.sel.has(p))
+      : state.x.sel.has(cur);   // empty directory: keep its own explicit state
+    if (full) state.x.sel.add(cur);
+    else state.x.sel.delete(cur);
+  }
+}
+
+function normalizeSelection() {
+  const x = state.x;
+  const map = entryMap();
+  const dirs = [...map.keys()]
+    .filter((p) => map.get(p).isDir)
+    .sort((a, b) => b.split('/').length - a.split('/').length);
+  for (const dir of dirs) {
+    if (!x.sel.has(dir)) continue;
+    if (!descendantsOf(dir, map).every((p) => x.sel.has(p))) x.sel.delete(dir);
+  }
+  x.selAll = map.size > 0 && x.sel.size === map.size;
+}
+
+/** Exact engine request for the current selection.
+ *  null  -> all entries selected: omit `entries` and keep the whole-archive
+ *           path (also correct when the backend list is capped).
+ *  array -> minimal set of selected files plus topmost fully selected dirs;
+ *           partially selected dirs are never sent, so a child the user
+ *           unchecked can never come back through a parent subtree. */
+function selectionPayload() {
+  const x = state.x;
+  if (!x.selSupported) return null;
+  const map = entryMap();
+  if (!map.size) return null;
+  if (x.sel.size === map.size) return null;
+  const picked = [];
+  map.forEach((info, path) => {
+    if (!x.sel.has(path)) return;
+    const parts = path.split('/');
+    let covered = false;
+    for (let i = 1; i < parts.length; i += 1) {
+      const ancestor = parts.slice(0, i).join('/');
+      if (x.sel.has(ancestor) && map.get(ancestor) && map.get(ancestor).isDir) {
+        covered = true;
+        break;
+      }
+    }
+    if (!covered) picked.push(path);
+  });
+  return picked;
+}
+
+function reconcileSelection() {
+  const x = state.x;
+  const map = entryMap();
+  const list = [...map.keys()];
+  if (!x.selTouched) {
+    x.sel = new Set(list);
+    x.selAll = list.length > 0;
+    return;
+  }
+  x.sel = new Set(list.filter((p) => x.sel.has(p)));
+  normalizeSelection();
+}
+
+function setSelColumn(show) {
+  const table = document.querySelector('#x-table')?.closest('table');
+  if (table) table.classList.toggle('no-sel', !show);
+  const tools = $('#x-sel-tools');
+  if (tools) tools.classList.toggle('hidden', !show);
+  const allBox = $('#x-sel-all');
+  if (allBox) {
+    allBox.disabled = !show;
+    if (!show) { allBox.checked = false; allBox.indeterminate = false; }
+  }
+}
+
+/** Selection changes patch the existing rows in place: re-rendering the table
+ *  would destroy the focused row after every checkbox / Space press. */
+function updateSelectionUI() {
+  const x = state.x;
+  const info = x.info || {};
+  const locked = !!info.needsPassword && !(info.entries || []).length;
+  if (!x.path || x.loading || locked) return;
+  const supported = x.selSupported;
+  const total = (info.entries || []).length;
+  const n = supported ? x.sel.size : 0;
+  const count = $('#x-sel-count');
+  if (count) count.textContent = supported
+    ? `已选 ${n} / ${total} 项`
+    : '当前格式不支持部分解压，将解压整包';
+  const allBox = $('#x-sel-all');
+  if (allBox) {
+    allBox.checked = supported && total > 0 && n === total;
+    allBox.indeterminate = supported && n > 0 && n < total;
+    allBox.disabled = !supported;
+  }
+  if (supported) {
+    const map = entryMap();
+    document.querySelectorAll('#x-table tr[data-entry]').forEach((tr) => {
+      const path = normEntry(tr.dataset.entry);
+      const info = map.get(path);
+      const on = x.sel.has(path);
+      const partial = !!info && info.isDir && !on
+        && descendantsOf(path, map).some((p) => x.sel.has(p));
+      tr.classList.toggle('is-selected', on);
+      tr.classList.toggle('is-partial', partial);
+      tr.setAttribute('aria-selected', on ? 'true' : 'false');
+      const box = tr.querySelector('.row-sel');
+      if (box) { box.checked = on; box.indeterminate = partial; }
+    });
+  }
+  const start = $('#x-start');
+  if (supported) {
+    start.disabled = n === 0 || !!x.error;
+    start.innerHTML = `解压选中 ${n} 项<kbd>⌘↵</kbd>`;
+  } else {
+    start.disabled = !x.info || !!x.error;
+    start.innerHTML = '开始解压<kbd>⌘↵</kbd>';
+  }
+}
+
+function toggleEntry(path) {
+  const x = state.x;
+  if (!x.selSupported) return;
+  const map = entryMap();
+  const key = normEntry(path);
+  const info = map.get(key);
+  if (!info) return;
+  if (info.isDir) {
+    // Directory row = whole subtree, matching the API contract.  Clicking an
+    // indeterminate directory selects the full subtree; clicking a full one
+    // clears it.
+    const affected = [key, ...descendantsOf(key, map)];
+    const full = affected.every((p) => x.sel.has(p));
+    affected.forEach((p) => (full ? x.sel.delete(p) : x.sel.add(p)));
+  } else if (x.sel.has(key)) {
+    x.sel.delete(key);
+  } else {
+    x.sel.add(key);
+  }
+  refreshAncestors(key);
+  normalizeSelection();
+  x.selTouched = true;
+  updateSelectionUI();
+}
+
+function selectAllEntries(on) {
+  const x = state.x;
+  if (!x.selSupported) return;
+  const list = [...entryMap().keys()];
+  x.sel = new Set(on ? list : []);
+  x.selTouched = !on || x.selTouched;
+  x.selAll = on && list.length > 0;
+  updateSelectionUI();
 }
 
 function renderExtract() {
@@ -593,7 +901,9 @@ function renderExtract() {
   if (!has || x.loading || x.error) x.expanded = false;
 
   if (!has) {
+    $('#x-start').innerHTML = '开始解压<kbd>⌘↵</kbd>';
     $('#x-start').disabled = true;
+    setSelColumn(false);
     return;
   }
   const info = x.info || {};
@@ -617,16 +927,18 @@ function renderExtract() {
       : info.savedPasswordUsed ? '已使用记住的密码' : '';
 
   if (x.loading) {
-    $('#x-table').innerHTML = `<tr><td colspan="3" style="padding:22px 16px;color:var(--ink-3)">正在读取目录…</td></tr>`;
+    $('#x-table').innerHTML = `<tr><td colspan="4" style="padding:22px 16px;color:var(--ink-3)">正在读取目录…</td></tr>`;
     $('#x-more').textContent = '';
     $('#x-outhint').textContent = '读取中…';
+    $('#x-start').innerHTML = '开始解压<kbd>⌘↵</kbd>';
     $('#x-start').disabled = true;
+    setSelColumn(false);
     return;
   }
 
   if (locked) {
     $('#x-table').innerHTML = `
-      <tr><td colspan="3" style="padding:26px 16px;text-align:center;color:var(--ink-3)">
+      <tr><td colspan="4" style="padding:26px 16px;text-align:center;color:var(--ink-3)">
         <div style="display:flex;align-items:center;justify-content:center;gap:8px">
           ${icon('i-lock', 'lock-ic')} 目录已加密 — 输入密码后可查看内容
         </div>
@@ -634,7 +946,9 @@ function renderExtract() {
     $('#x-more').textContent = '文件列表已加密';
     // Starting a doomed job just to learn the password is wrong is noise:
     // gate the button on a non-empty password field instead.
+    $('#x-start').innerHTML = '开始解压<kbd>⌘↵</kbd>';
     $('#x-start').disabled = !x.pw;
+    setSelColumn(false);
     $('#x-dest-text').textContent = x.dest ? midEllipsis(shortPath(x.dest), 34) : '与压缩包同目录';
     $('#x-folder').setAttribute('aria-checked', String(x.autoFolder));
     $('#x-over').value = x.overwrite;
@@ -644,6 +958,11 @@ function renderExtract() {
     return;
   }
 
+  x.selSupported = partialSupported(info);
+  if (x.selSupported) reconcileSelection();
+  else { x.sel = new Set(); x.selAll = false; }
+  setSelColumn(x.selSupported);
+
   const rows = (info.entries || []).filter((e) => !e.isDir);
   const dirs = (info.entries || []).filter((e) => e.isDir);
   const entries = x.error ? [] : [...dirs, ...rows];
@@ -651,12 +970,18 @@ function renderExtract() {
   const more = $('#x-show-all');
   more.classList.toggle('hidden', entries.length <= show.length);
   more.textContent = `显示全部 ${entries.length} 条`;
-  $('#x-table').innerHTML = show.length ? show.map((e) => `
-    <tr data-entry="${esc(e.path)}" tabindex="0">
+  $('#x-table').innerHTML = show.length ? show.map((e) => {
+    const on = x.selSupported && x.sel.has(normEntry(e.path));
+    return `
+    <tr data-entry="${esc(e.path)}" tabindex="0" class="${on ? 'is-selected' : ''}"
+        aria-selected="${on ? 'true' : 'false'}">
+      <td class="selcol"><input type="checkbox" class="row-sel" tabindex="-1"
+          aria-label="选择 ${esc(e.path)}" ${on ? 'checked' : ''}></td>
       <td class="name ${e.isDir ? 'dir' : ''}">${icon(e.isDir ? 'i-folder' : 'i-file', 'lock-ic')} ${esc(e.path)}</td>
       <td class="num">${e.isDir ? '—' : fmtSize(e.size)}</td>
       <td>${esc((e.modified || '').slice(5).replace('T', ' ')) || '—'}</td>
-    </tr>`).join('') : `<tr><td colspan="3" style="padding:22px 16px;color:var(--ink-3)">${x.error ? '无法读取目录' : '空归档'}</td></tr>`;
+    </tr>`;
+  }).join('') : `<tr><td colspan="4" style="padding:22px 16px;color:var(--ink-3)">${x.error ? '无法读取目录' : '空归档'}</td></tr>`;
 
   const truncated = info.entriesTruncated || 0;
   $('#x-more').textContent = x.error ? '目录读取失败'
@@ -667,11 +992,12 @@ function renderExtract() {
   $('#x-folder').setAttribute('aria-checked', String(x.autoFolder));
   $('#x-over').value = x.overwrite;
   $('#x-over-hint').textContent = overHintText(x.overwrite);
-  $('#x-start').disabled = !!x.error;
+  updateSelectionUI();
   const dest = finalDest('display');
   $('#x-outpath').textContent = midEllipsis(shortPath(dest), 56);
+  const sel = x.selSupported ? ` · 已选 ${x.sel.size} 项` : '';
   $('#x-outhint').textContent = x.error ? '无法解压该文件'
-    : `${info.needsPassword ? '需要密码' : '无需密码'} · 重名 ${({ rename: '自动改名', overwrite: '覆盖', skip: '跳过' })[x.overwrite]}`;
+    : `${info.needsPassword ? '需要密码' : '无需密码'} · 重名 ${({ rename: '自动改名', overwrite: '覆盖', skip: '跳过' })[x.overwrite]}${sel}`;
 }
 
 function finalDest() {
@@ -807,7 +1133,7 @@ function patchJobEl(el, job) {
   const bar = el.querySelector('.bar');
   // 结束态收起贯穿整行的进度条：完成不再是满宽绿条，失败/取消同理，
   // 状态由文字与图标承载（详见任务书 §5.3「收起长进度条」）。
-  const finished = job.status === 'done' || job.status === 'error' || job.status === 'canceled';
+  const finished = job.status === 'done' || job.status === 'error' || job.status === 'cancelled';
   bar.classList.toggle('hidden', finished);
   if (!finished) {
     bar.classList.toggle('indet', job.status === 'running' && pct < 1);
@@ -888,7 +1214,7 @@ function renderQueue() {
   const seen = new Set();
   // 面板秩序（§5.3）：进行中、等待在最上，失败其次，完成沉底——已完成的
   // 任务不再抢占注意力。稳定排序保持同组内的队列顺序。
-  const RANK = { running: 0, queued: 1, error: 2, canceled: 3, done: 4 };
+  const RANK = { running: 0, queued: 1, error: 2, cancelled: 3, done: 4 };
   queueNodeSync([...jobs].sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9)), list, seen);
 }
 
@@ -920,7 +1246,8 @@ function renderRecent() {
   const list = $('#rail-recent-list');
   if (!box || !list) return;
   const current = state.jobs
-    .filter((j) => j.status === 'done' || j.status === 'error' || j.status === 'canceled')
+    .filter((j) => j.status === 'done' || j.status === 'error'
+       || j.status === 'cancelled')
     .slice(0, 3);
   const done = current.length ? current : state.history.slice(0, 3);
   box.classList.toggle('hidden', done.length === 0);
@@ -1040,12 +1367,9 @@ async function addToCompress(paths) {
   const stats = (await Promise.all(fresh.map(statPath))).filter(Boolean);
   if (!stats.length) return;
   state.c.items.push(...stats);
+  bumpDraft();
   if (dup > 0) toast(`已添加 ${stats.length} 项 · ${dup} 项已在列表中`, 'ok');
-  if (!state.c.touchedName) state.c.name = defaultArchiveName();
-  if (!state.c.dest) {
-    const dirs = new Set(stats.map((s) => s.dir));
-    state.c.dest = dirs.size === 1 ? stats[0].dir : '';
-  }
+  syncAutoDraftFields();
   setView('compress');
   renderCompress();
   refreshTarget();
@@ -1063,6 +1387,11 @@ async function loadArchive(path) {
   state.x.dest = dirName(path);
   state.x.pw = '';
   state.x.remember = false;
+  // A new archive starts from its own default selection (all entries).
+  state.x.sel = new Set();
+  state.x.selAll = false;
+  state.x.selTouched = false;
+  state.x.selSupported = false;
   $('#x-pw').value = '';
   $('#x-pw').type = 'password';
   setView('extract');
@@ -1196,14 +1525,24 @@ async function startCompress() {
   if (!c.items.length || c.busy) return;
   const name = ($('#c-name').value || defaultArchiveName()).trim();
   if (!name) { toast('请填写归档名称', 'err'); return; }
+  // Snapshot the submitted draft: the response is applied only to this exact
+  // generation, so edits made while it is in flight cannot be wiped later.
+  const snapshot = {
+    version: c.draftVersion,
+    paths: c.items.map((i) => i.path),
+    name,
+    dest: c.dest || dirName(c.items[0].path),
+    nameRev: c.nameRev,
+    destRev: c.destRev,
+  };
   c.busy = true;
   $('#c-start').disabled = true;
   $('#c-outhint').textContent = '正在创建…';
   try {
     const r = await api('/compress', {
-      inputs: c.items.map((i) => i.path),
-      name,
-      destDir: c.dest || dirName(c.items[0].path),
+      inputs: snapshot.paths,
+      name: snapshot.name,
+      destDir: snapshot.dest,
       format: c.format,
       level: c.level,
       method: c.method,
@@ -1215,6 +1554,10 @@ async function startCompress() {
       par2Percent: c.par2 ? c.par2Pct : 0,
       par2Single: c.par2 && !!c.par2Single,
     });
+    // Accepted: this draft is no longer "待压缩".  A failed request keeps it.
+    settleSubmittedDraft(snapshot);
+    c.busy = false;
+    renderCompress();
     toast(`开始压缩 · ${baseName(r.target)}`, 'ok', 'i-compress');
     setView('queue');
     refreshJobsNow();
@@ -1222,13 +1565,21 @@ async function startCompress() {
     toast(err.message, 'err');
     c.busy = false;
     renderCompress();
+    refreshTarget();
   }
-  c.busy = false;
 }
 
 async function startExtract(onExists) {
   const x = state.x;
   if (!x.path || !x.info) return;
+  if (x.selSupported && x.sel.size === 0) return;   // primary button is disabled
+  // All selected = the historical whole-archive request (omitting entries also
+  // works when the backend capped the listing).  An explicit subset sends the
+  // exact selected files plus only *fully* selected directories; a partially
+  // selected parent is never sent as a subtree (that used to resurrect a child
+  // the user had just unchecked).
+  const entries = selectionPayload();
+  if (x.selSupported && entries && entries.length === 0) return;
   try {
     const r = await api('/extract', {
       path: x.path,
@@ -1238,9 +1589,12 @@ async function startExtract(onExists) {
       destDir: x.dest || dirName(x.path),
       autoFolder: x.autoFolder,
       overwrite: x.overwrite,
+      ...(entries ? { entries } : {}),
       ...(onExists ? { onExists } : {}),
     });
-    toast(`开始解压到 ${baseName(r.dest)}`, 'ok', 'i-extract');
+    toast(entries
+      ? `开始解压选中 ${entries.length} 项到 ${baseName(r.dest)}`
+      : `开始解压到 ${baseName(r.dest)}`, 'ok', 'i-extract');
     setView('queue');
     refreshJobsNow();
   } catch (err) {
@@ -1399,10 +1753,7 @@ async function pasteFromClipboard() {
 /* --------------------------------------------------------------- list ops */
 function clearCompressList() {
   if (!state.c.items.length) return;
-  state.c.items = [];
-  state.c.dest = '';
-  state.c.name = '';
-  state.c.touchedName = false;
+  resetCompressDraft();
   renderCompress();
   refreshTarget();
 }
@@ -1410,6 +1761,8 @@ function clearCompressList() {
 function removeCompressItem(idx) {
   if (!state.c.items[idx]) return;
   state.c.items.splice(idx, 1);
+  bumpDraft();
+  syncAutoDraftFields();
   renderCompress();
   refreshTarget();
 }
@@ -1428,9 +1781,11 @@ async function removeJob(id) {
 async function recompress(job) {
   const inputs = (job.inputs || []).filter(Boolean);
   if (!inputs.length) { toast('原始文件列表已不可用', 'err'); return; }
+  // A recompress is a brand-new draft: neither the unrelated draft nor its
+  // destination may leak into it.
   setView('compress');
-  state.c.items = [];
-  state.c.touchedName = false;
+  resetCompressDraft();
+  renderCompress();
   await addToCompress(inputs);
 }
 
@@ -1453,8 +1808,10 @@ function menuCompressRow(idx) {
     { label: '开始压缩', icon: 'i-compress', kbd: '⌘↵', action: startCompress },
     { label: '仅压缩此项', disabled: state.c.items.length === 1, action: () => {
         state.c.items = [it];
-        state.c.name = '';
         state.c.touchedName = false;
+        state.c.name = '';
+        bumpDraft();
+        syncAutoDraftFields();
         renderCompress();
         refreshTarget();
       } },
@@ -2875,9 +3232,22 @@ function wireEvents() {
   }
   $('#c-dest').addEventListener('click', async () => {
     const paths = await pick('dest', { title: '选择保存位置', dir: state.c.dest || (state.c.items[0] ? dirName(state.c.items[0].path) : homeDir) });
-    if (paths.length) { state.c.dest = paths[0]; renderCompress(); refreshTarget(); }
+    if (paths.length) {
+      state.c.dest = paths[0];
+      state.c.destTouched = true;
+      state.c.destRev += 1;
+      bumpDraft();
+      renderCompress();
+      refreshTarget();
+    }
   });
-  $('#c-name').addEventListener('input', () => { state.c.touchedName = true; refreshTarget(); });
+  $('#c-name').addEventListener('input', (e) => {
+    state.c.name = e.target.value;
+    state.c.touchedName = true;
+    state.c.nameRev += 1;
+    bumpDraft();
+    refreshTarget();
+  });
   $('#c-start').addEventListener('click', startCompress);
   $('#c-adv-toggle').addEventListener('click', (e) => {
     const open = e.currentTarget.getAttribute('aria-expanded') === 'true';
@@ -2942,9 +3312,24 @@ function wireEvents() {
     renderExtract();
   });
   $('#x-over').addEventListener('change', (e) => { state.x.overwrite = e.target.value; renderExtract(); });
+  $('#x-sel-all').addEventListener('change', (e) => selectAllEntries(e.target.checked));
+  $('#x-sel-all-btn').addEventListener('click', () => selectAllEntries(true));
+  $('#x-sel-clear').addEventListener('click', () => selectAllEntries(false));
+  $('#x-table').addEventListener('change', (e) => {
+    const box = e.target.closest('.row-sel');
+    if (box) toggleEntry(box.closest('tr').dataset.entry);
+  });
   $('#x-table').addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const rows = [...document.querySelectorAll('#x-table tr[data-entry]')];
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      const tr = document.activeElement && document.activeElement.closest
+        ? document.activeElement.closest('#x-table tr[data-entry]') : null;
+      if (!tr || !state.x.selSupported) return;
+      e.preventDefault();
+      toggleEntry(tr.dataset.entry);
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const at = rows.indexOf(document.activeElement);
     if (at < 0) return;
     e.preventDefault();

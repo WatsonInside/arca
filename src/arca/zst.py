@@ -147,6 +147,42 @@ def _size(p: str) -> int:
         return 0
 
 
+def _reap_child(proc, timeout: float = 5.0) -> None:
+    """Stop and reap a direct zstd child, then close every pipe.
+
+    Cleanup must never replace the exception that caused it: only OSError-ish
+    cleanup is ignored, and close/wait/timeout handling is bounded.  This is
+    separate from _Stream.close (already validated) and engine.run().
+    """
+    if proc is None:
+        return
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                pass
+        except Exception:
+            pass
+    for name in ("stdin", "stdout", "stderr"):
+        stream = getattr(proc, name, None)
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+
 def compress(paths: list[str], base: str, out_path: str, level: int = 3,
              exclude_meta: bool = True, threads: int = 0,
              on_progress=None, cancel: threading.Event | None = None) -> dict:
@@ -189,70 +225,77 @@ def compress(paths: list[str], base: str, out_path: str, level: int = 3,
     with open(out_path, "wb") as out:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out,
                                 stderr=subprocess.PIPE, bufsize=0)
-        sink = _Counter(proc.stdin, bump)
-        files = 0
         try:
-            # mode "w|" = streaming tar, no seeking required: that is what lets
-            # the archive go straight into zstd instead of a temp file first.
-            with tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT) as tf:
-                for kind, full, arc, size in plan:
-                    if cancel is not None and cancel.is_set():
-                        raise ZstdError("已取消")
-                    if kind == "dir":
-                        if arc in (".", ""):
+            sink = _Counter(proc.stdin, bump)
+            files = 0
+            try:
+                # mode "w|" = streaming tar, no seeking required: that is what
+                # lets the archive go straight into zstd instead of a temp file
+                # first.
+                with tarfile.open(fileobj=sink, mode="w|",
+                                  format=tarfile.PAX_FORMAT) as tf:
+                    for kind, full, arc, size in plan:
+                        if cancel is not None and cancel.is_set():
+                            raise ZstdError("已取消")
+                        if kind == "dir":
+                            if arc in (".", ""):
+                                continue
+                            info = tarfile.TarInfo(arc.replace(os.sep, "/"))
+                            info.type = tarfile.DIRTYPE
+                            info.mode = 0o755
+                            # TarInfo defaults to mtime 0, which the preview
+                            # would show as 1970 -- carry the real directory
+                            # time over.
+                            try:
+                                info.mtime = int(os.stat(full).st_mtime)
+                            except OSError:
+                                pass
+                            tf.addfile(info)
                             continue
-                        info = tarfile.TarInfo(arc.replace(os.sep, "/"))
-                        info.type = tarfile.DIRTYPE
-                        info.mode = 0o755
-                        # TarInfo defaults to mtime 0, which the preview would
-                        # show as 1970 -- carry the real directory time over.
                         try:
-                            info.mtime = int(os.stat(full).st_mtime)
+                            st = os.stat(full)
                         except OSError:
-                            pass
-                        tf.addfile(info)
-                        continue
-                    try:
-                        st = os.stat(full)
-                    except OSError:
-                        continue
-                    info = tarfile.TarInfo(arc)
-                    info.size = st.st_size
-                    info.mtime = int(st.st_mtime)
-                    info.mode = st.st_mode & 0o7777
-                    with open(full, "rb") as fh:
-                        # Feed in chunks so progress moves and cancel is noticed
-                        # even inside a single huge file.
-                        class _Chunk:
-                            def __init__(self, f):
-                                self.f = f
+                            continue
+                        info = tarfile.TarInfo(arc)
+                        info.size = st.st_size
+                        info.mtime = int(st.st_mtime)
+                        info.mode = st.st_mode & 0o7777
+                        with open(full, "rb") as fh:
+                            # Feed in chunks so progress moves and cancel is
+                            # noticed even inside a single huge file.
+                            class _Chunk:
+                                def __init__(self, f):
+                                    self.f = f
 
-                            def read(self, n=-1):
-                                if cancel is not None and cancel.is_set():
-                                    raise ZstdError("已取消")
-                                return self.f.read(n)
+                                def read(self, n=-1):
+                                    if cancel is not None and cancel.is_set():
+                                        raise ZstdError("已取消")
+                                    return self.f.read(n)
 
-                        tf.addfile(info, _Chunk(fh))
-                    files += 1
-        except ZstdError:
+                            tf.addfile(info, _Chunk(fh))
+                        files += 1
+            except ZstdError:
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+                raise
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            err = (proc.stderr.read().decode("utf-8", "replace")
+                   if proc.stderr else "")
             try:
-                proc.kill()
-            except Exception:
-                pass
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
-            raise
+                code = proc.wait(timeout=5)
+                if code != 0:
+                    raise ZstdError(_hint(err)
+                                    or f"zstd 压缩失败（退出码 {code}）")
+            except subprocess.TimeoutExpired:
+                raise ZstdError("zstd 压缩进程未退出")
         finally:
-            try:
-                proc.stdin.close()
-            except Exception:
-                pass
-        err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
-        code = proc.wait()
-        if code != 0:
-            raise ZstdError(_hint(err) or f"zstd 压缩失败（退出码 {code}）")
+            _reap_child(proc)
 
     if on_progress:
         on_progress(100.0, "", last[2] or 0.0)
@@ -329,14 +372,41 @@ class _Stream:
         return data
 
     def close(self):
-        try:
-            self.raw.close()
-        except Exception:
-            pass
-        try:
-            self.proc.wait(timeout=5)
-        except Exception:
-            pass
+        """Close both pipes and reap the child with bounded waits.
+
+        Closing stdout can make zstd exit via SIGPIPE; stderr must still be
+        closed, and a child that ignores the close must be terminated/killed
+        rather than left running after the stream object is gone.
+        """
+        proc = self.proc
+        stream = self.raw
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        err = getattr(proc, "stderr", None)
+        if err is not None:
+            try:
+                err.close()
+            except OSError:
+                pass
 
     def __enter__(self):
         return self
@@ -469,19 +539,24 @@ def _extract_single(binary, path, dest, overwrite, on_progress, cancel) -> dict:
         proc = subprocess.Popen([binary, "-d", "-q", "-c", path],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
-        seen = 0
-        while True:
-            if cancel is not None and cancel.is_set():
-                proc.kill()
-                raise ZstdError("已取消")
-            chunk = proc.stdout.read(1 << 20)
-            if not chunk:
-                break
-            out.write(chunk)
-            seen += len(chunk)
-            if on_progress:
-                on_progress(min(99.0, seen * 100.0 / total), "", 0.0)
-        proc.wait()
+        try:
+            seen = 0
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise ZstdError("已取消")
+                chunk = proc.stdout.read(1 << 20)
+                if not chunk:
+                    break
+                out.write(chunk)
+                seen += len(chunk)
+                if on_progress:
+                    on_progress(min(99.0, seen * 100.0 / total), "", 0.0)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                raise ZstdError("zstd 解压进程未退出")
+        finally:
+            _reap_child(proc)
     if on_progress:
         on_progress(100.0, "", 0.0)
     return {"files": 1, "bytes": seen}

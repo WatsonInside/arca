@@ -93,6 +93,33 @@ def split_progress(buf: str) -> tuple[list[str], str]:
     return parts, tail
 
 
+def _reap_process(proc, timeout: float = 5.0) -> None:
+    """Stop and reap a child, then close its stdout, without hiding the error
+    that triggered cleanup.  Used from engine.run()'s finally path."""
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                pass
+    stream = getattr(proc, "stdout", None)
+    if stream is not None:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
 class EngineError(Exception):
     pass
 
@@ -260,7 +287,27 @@ class Engine:
                 return result
         return self._inspect_7zz(entry, raw_path, password)
 
-    def _inspect_zip(self, entry: str, raw_path: str):
+    def list_entries(self, raw_path: str, password: str = "") -> list[dict]:
+        """Every entry of the archive, without the 800-row UI cap.
+
+        Partial extraction must reject names that are not real archive entries
+        *before* a job exists, so membership is checked against this full
+        listing instead of the capped payload the UI receives.  Name decoding
+        follows ``inspect`` (including the zipfix/legacy-ZIP mapping).
+        """
+        entry = self.resolve(raw_path)
+        if not os.path.exists(entry):
+            raise EngineError("文件不存在：" + raw_path)
+        if zst.is_zstd(entry):
+            return zst.listing(entry)["entries"]
+        if not password and not self.parts(entry):
+            result = self._inspect_zip(entry, raw_path, full=True)
+            if result is not None:
+                return result["entries"]
+        result = self._inspect_7zz(entry, raw_path, password, full=True)
+        return result.get("entries") or []
+
+    def _inspect_zip(self, entry: str, raw_path: str, full: bool = False):
         import struct
         import zipfile
 
@@ -323,11 +370,12 @@ class Engine:
                         "method": "" if fixed else methods[zi.compress_type],
                     })
             return self._inspect_result(entry, raw_path, {"Type": "zip"}, entries,
-                                        False, "", name_encoding)
+                                        False, "", name_encoding, full=full)
         except (OSError, ValueError, UnicodeError, struct.error, zipfile.BadZipFile):
             return None
 
-    def _inspect_7zz(self, entry: str, raw_path: str, password: str = "") -> dict:
+    def _inspect_7zz(self, entry: str, raw_path: str, password: str = "",
+                     full: bool = False) -> dict:
         # No `-ba`: bare mode also hides the archive header block, which is the
         # only thing a *valid empty* archive prints.  Entry blocks are still
         # parsed the same way, and the header gives us Type/Solid/Method that
@@ -368,10 +416,10 @@ class Engine:
                 entries = plan["entries"]
                 name_encoding = plan["encoding"]
         return self._inspect_result(entry, raw_path, meta, entries, needs_password,
-                                    password, name_encoding)
+                                    password, name_encoding, full=full)
 
     def _inspect_result(self, entry, raw_path, meta, entries, needs_password,
-                        password, name_encoding):
+                        password, name_encoding, full: bool = False):
         ftype = (meta.get("Type") or "").strip()
         label = _type_label(ftype, entry)
         parts = self.parts(entry)
@@ -402,8 +450,8 @@ class Engine:
             "parts": [os.path.basename(p) for p in parts],
             "isSplit": bool(parts) or ftype.lower() == "split",
             "nameEncoding": name_encoding,
-            "entries": entries[:800],
-            "entriesTruncated": max(0, len(entries) - 800),
+            "entries": entries if full else entries[:800],
+            "entriesTruncated": 0 if full else max(0, len(entries) - 800),
             "error": None,
         }
 
@@ -517,17 +565,25 @@ class Engine:
         use_rar = fmt.startswith("rar") and self.rar is not None
         pw = opts.get("password") or ""
         mode = opts.get("overwrite") or "rename"
+        # Partial extraction: only the selected entry names are passed to the
+        # engine.  Names are validated by server._extract_entries() before a
+        # job exists (no wildcards / traversal), so they are safe positional
+        # arguments here.  A selected directory pulls its subtree, which is
+        # 7-Zip's / WinRAR's own rule for a directory name.
+        entries = [str(e) for e in (opts.get("entries") or [])]
         if use_rar:
             # WinRAR 的目标目录是位置参数，且必须以路径分隔符结尾，否则
             # 会被当成文件掩码；-o 家族是覆盖开关（7-Zip 才用 -o<目录> 与
             # -ao*）。WinRAR 没有「仅更新」开关，newer 落到 -or（同样不
-            # 破坏既有文件）。
+            # 破坏既有文件）。语法：rar x <archive> [files…] [dest\] ——
+            # 目标目录必须排在选择项之后。
             cmd = [self.rar, "x", entry]
             if pw:
                 cmd.append("-p" + pw)
             cmd.append({"overwrite": "-o+", "skip": "-o-",
                         "rename": "-or", "newer": "-or"}.get(mode, "-or"))
             cmd += ["-idcn", "-y"]
+            cmd += entries
             cmd.append(opts["dest"] + os.sep)
             return cmd
         cmd = [self.zz, "x", entry, "-o" + opts["dest"]]
@@ -536,6 +592,12 @@ class Engine:
         cmd.append({ "overwrite": "-aoa", "skip": "-aos",
                      "rename": "-aou", "newer": "-aot" }.get(mode, "-aou"))
         cmd += ["-bsp1", "-bso0", "-bse1", "-y"]
+        if entries:
+            # `--` stops switch parsing; without it a name starting with "-"
+            # would be read as an option (server rejects those too, belt and
+            # braces).
+            cmd.append("--")
+            cmd += entries
         return cmd
 
     def build_test_cmd(self, archive: str, password: str = "") -> list[str]:
@@ -547,7 +609,12 @@ class Engine:
     # ----------------------------------------------------------------- running
     def run(self, cmd: list[str], cwd: str | None = None, on_progress=None,
             cancel: threading.Event | None = None, total_bytes: int = 0) -> tuple[int, str]:
-        """Run a 7z command, streaming progress. Returns (exit_code, text_log)."""
+        """Run a 7z command, streaming progress. Returns (exit_code, text_log).
+
+        The child is always reaped and its stdout closed, including when a
+        read/callback raises: jobs roll back only after the engine can no longer
+        write into the destination.
+        """
         proc = subprocess.Popen(
             cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, env=ENV, bufsize=0,
@@ -574,55 +641,60 @@ class Engine:
                     last[0], last[1] = now, percent
             on_progress(percent, line, speed[0])
 
-        while True:
-            if cancel is not None and cancel.is_set():
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-                time.sleep(0.4)
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                break
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                break
-            text = chunk.decode("utf-8", "replace")
-            chunks.append(text)
-            buf += text
-            # 7-Zip 26.x rewrites its progress line with backspaces when output
-            # is not a terminal, so "\r\n" alone never splits anything: the
-            # whole stream stayed in buf and no percent was ever reported.
-            parts, buf = split_progress(buf)
-            for line in parts:
+        try:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    time.sleep(0.4)
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    break
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", "replace")
+                chunks.append(text)
+                buf += text
+                # 7-Zip 26.x rewrites its progress line with backspaces when
+                # output is not a terminal, so "\r\n" alone never splits
+                # anything: the whole stream stayed in buf and no percent was
+                # ever reported.
+                parts, buf = split_progress(buf)
+                for line in parts:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    m = re.findall(r"(\d{1,3})%", line)
+                    if m:
+                        emit(min(100, int(m[-1])), line)
+                    elif "Scan" in line:
+                        # The first phase prints "0M Scan ." with no percent yet;
+                        # without this the UI sat on 「准备中」 until 1% arrived.
+                        emit(None, line)
+            # The last record has no separator after it: flush it, otherwise the
+            # final 100% never reaches the UI and the job looks stuck at 99%.
+            tail_parts, tail = split_progress(buf)
+            for line in [*tail_parts, tail]:
                 line = line.strip()
                 if not line:
                     continue
                 m = re.findall(r"(\d{1,3})%", line)
                 if m:
                     emit(min(100, int(m[-1])), line)
-                elif "Scan" in line:
-                    # The first phase prints "0M Scan ." with no percent yet;
-                    # without this the UI sat on 「准备中」 until 1% arrived.
-                    emit(None, line)
-        # The last record has no separator after it: flush it, otherwise the
-        # final 100% never reaches the UI and the job looks stuck at 99%.
-        for line in [*split_progress(buf)[0], split_progress(buf)[1]]:
-            line = line.strip()
-            if not line:
-                continue
-            m = re.findall(r"(\d{1,3})%", line)
-            if m:
-                emit(min(100, int(m[-1])), line)
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
-        code = proc.returncode if proc.returncode is not None else -1
-        log = "".join(chunks)
-        return code, log
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            code = proc.returncode if proc.returncode is not None else -1
+            log = "".join(chunks)
+            return code, log
+        finally:
+            _reap_process(proc)
 
 
 # --------------------------------------------------------------------- parsing

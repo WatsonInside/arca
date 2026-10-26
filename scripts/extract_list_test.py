@@ -85,7 +85,7 @@ class ExtractListTests(unittest.TestCase):
         return self.ui.js("""(() => {
           const button = document.querySelector('#x-show-all');
           return {paths: [...document.querySelectorAll('#x-table tr[data-entry]')].map(e => e.dataset.entry),
-            columns: [...document.querySelectorAll('#x-table tr[data-entry]')].every(e => e.children.length === 3),
+            columns: [...document.querySelectorAll('#x-table tr[data-entry]')].every(e => e.children.length === 4),
             visible: getComputedStyle(button).display !== 'none', label: button.textContent,
             hint: document.querySelector('#x-more').textContent,
             text: document.querySelector('#x-table').textContent,
@@ -115,7 +115,7 @@ class ExtractListTests(unittest.TestCase):
         self.assertEqual(first["label"], "显示全部 800 条")
         self.assertEqual(sum(p.startswith("dir-") for p in first["paths"]), 60)
         self.assertEqual(self.expand()["paths"], self.ordered(info))
-        print("REAL HTTP/DOM: 800 ZIP entries, initial 200 includes all 60 directories; expanded 800 in directory/file order, three columns intact, button hidden")
+        print("REAL HTTP/DOM: 800 ZIP entries, initial 200 includes all 60 directories; expanded 800 in directory/file order, four columns (selection + name/size/time) intact, button hidden")
 
     def test_new_archive_resets_expansion(self):
         self.load("800.zip", "dir-0059")

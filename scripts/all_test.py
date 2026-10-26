@@ -192,11 +192,16 @@ def main():
                              ("inspect-cache", "inspect_cache_test"), ("zip-inspect", "zip_inspect_test"),
                              ("extract-list", "extract_list_test"), ("concurrency", "concurrency_test"),
                              ("keyring", "keyring_test"), ("progress", "progress_test"), ("appupdate", "appupdate_test"),
-                             ("zip-password", "zip_password_test"), ("stats", "stats_test")]:
+                             ("zip-password", "zip_password_test"), ("stats", "stats_test"),
+                             ("jobwait", "jobwait_test"), ("menu-cleanup", "menu_cleanup_test"),
+                             ("partial-extract", "partial_extract_test"),
+                             ("fuzz-soak", "fuzz_soak_test")]:
             runner.run(name, PY + [f"scripts/{script}.py"])
         try:
             with headless(runner) as port:
                 runner.run("menu", PY + ["scripts/menu_test.py", "--port-file", str(port)])
+                runner.run("compress-draft", PY + ["scripts/compress_draft_test.py",
+                                                   "--port-file", str(port)])
                 if not args.skip_acceptance:
                     runner.run("acceptance", PY + ["scripts/acceptance_probe.py", "--port-file", str(port)])
                 if not args.full_update:

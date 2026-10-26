@@ -7,6 +7,7 @@ import os
 import posixpath
 import re
 import shutil
+import sys
 import threading
 import time
 import urllib.parse
@@ -600,10 +601,18 @@ class Handler(BaseHTTPRequestHandler):
     def _target_exists(self, path, archive=False):
         return (os.path.realpath(path) in self.ctx.manager._targets.values()
                 or os.path.exists(path)
-                or bool(archive and self.ctx.engine.parts(self.ctx.engine.resolve(path))))
+                or bool(archive and self.ctx.engine.parts(self.ctx.engine.resolve(path)))
+                # 恢复记录档（.par2 索引与 .vol 数据档）挂在目标名下：归档本体
+                # 不在而 sidecar 在时复用该名字，会让新档与旧恢复记录纠缠。
+                or bool(archive and par2_mod.recovery_files(path)))
 
     def _unique_target(self, path, archive=False):
-        root, ext = os.path.splitext(path)
+        # ".tar.zst" 是一个整体扩展名：唯一化序号必须插在它前面，
+        # 而不是 splitext 的 ".zst" 边界（否则产出 "x.tar 2.zst"）。
+        if path.lower().endswith(".tar.zst"):
+            root, ext = path[:-8], path[-8:]
+        else:
+            root, ext = os.path.splitext(path)
         candidate, index = path, 2
         while self._target_exists(candidate, archive):
             candidate = f"{root} {index}{ext}"
@@ -708,6 +717,16 @@ class Handler(BaseHTTPRequestHandler):
         entry = self.ctx.engine.resolve(path)
         if not os.path.exists(entry):
             return self._err("文件不存在")
+        # Partial extraction: validate the selection before a job exists, so
+        # bad input is a clean 400 instead of a job that fails after the UI
+        # already navigated to the task page.  `entries` absent = whole archive
+        # (the old behaviour); an empty list is NOT "whole archive".
+        partial = "entries" in body
+        entries = None
+        if partial:
+            entries, err = _validate_entries(body.get("entries"))
+            if err:
+                return self._err(err)
         password, saved = self._password(body, entry)
         with self.ctx.inspect_lock:
             cached = self.ctx.inspect_cache.pop(entry, None)
@@ -718,7 +737,28 @@ class Handler(BaseHTTPRequestHandler):
                 info = cached
             else:
                 info = self._inspect_archive_locked(entry, password)
-        total = int(info.get("uncompressed") or 0)
+        if partial:
+            if (info.get("type") or "").lower() in ("zst", "tar.zst") or info.get("single"):
+                return self._err("该格式不支持只解压选中项：zstd 是单流格式，只能整包解压")
+            try:
+                full = self.ctx.engine.list_entries(entry, password)
+            except eng.EngineError as exc:
+                return self._err(str(exc))
+            if not full:
+                # The cached inspect entry can be from a successful run with a
+                # different password, so never trust info["needsPassword"] here:
+                # an unlistable archive has no verifiable entries either way.
+                return self._err("无法读取归档目录，无法校验所选条目（请先输入正确密码，或该压缩包为空）")
+            # The API contract is "a selected directory means its whole
+            # subtree"; drop descendants that are already covered by a selected
+            # ancestor so redundant ancestor+descendant parameters are harmless.
+            entries = _prune_covered_entries(entries, full)
+            try:
+                total = _selected_bytes(entries, full)
+            except ValueError as exc:
+                return self._err(str(exc))
+        else:
+            total = int(info.get("uncompressed") or 0)
         dest_root = body.get("destDir") or os.path.dirname(entry)
         if not os.path.isdir(dest_root):
             try:
@@ -758,6 +798,8 @@ class Handler(BaseHTTPRequestHandler):
                 "format": info.get("type") or "",
                 "totalBytes": total,
             }
+            if entries:
+                opts["entries"] = list(entries)
             label = "解压 " + os.path.basename(entry)
             job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
                                srcPath=entry, destPath=dest, secrets=[password], bucket=dest_root,
@@ -769,6 +811,7 @@ class Handler(BaseHTTPRequestHandler):
             self.ctx.manager.submit(job, jobs_mod.make_extract_task(self.ctx.manager, opts))
             self._record_retry(job.id, "/api/extract", body)
         return self._json({"ok": True, "job": job.to_dict(), "dest": dest,
+                           "partial": len(entries) if entries else 0,
                            "savedPasswordUsed": saved, "passwordRemembered": remembered})
 
     def _test(self, body):
@@ -823,10 +866,108 @@ def _remove_target(target: str, engine) -> None:
             pass
 
 
+# ------------------------------------------------- partial extract selection
+_MAX_PARTIAL_ENTRIES = 1000
+_ENTRY_WILDCARD = re.compile(r"[*?\[\]]")
+
+
+def _validate_entries(raw):
+    """Syntax-only validation of an /api/extract `entries` value.
+
+    Returns (normalised entries, error).  Rules are deliberately strict and
+    documented in docs/ENGINEERING-NOTES.md: archive paths use "/" only, no
+    absolute paths, no "."/".."/empty segments, no wildcards (7-Zip would read
+    them as patterns), no leading "-"/"@" (7-Zip would read them as switches or
+    a list file), no duplicates, and an empty list never means "whole archive".
+    """
+    if not isinstance(raw, list):
+        return None, "entries 必须是字符串列表"
+    if not raw:
+        return None, "entries 不能为空：整包解压请省略 entries"
+    if len(raw) > _MAX_PARTIAL_ENTRIES:
+        return None, f"一次最多选择 {_MAX_PARTIAL_ENTRIES} 个条目"
+    out, seen = [], set()
+    for item in raw:
+        if not isinstance(item, str):
+            return None, "entries 必须是字符串列表"
+        if not item.strip():
+            return None, "entries 不能包含空项"
+        if "\x00" in item:
+            return None, "entries 不能包含 NUL 字符"
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in item):
+            return None, "entries 不能包含控制字符"
+        if "\\" in item:
+            return None, "entries 只接受 / 作为路径分隔符"
+        if item.startswith("/") or re.match(r"^[A-Za-z]:", item):
+            return None, "entries 不能是绝对路径"
+        if item[:1] in ("-", "@"):
+            return None, "entries 不能以 - 或 @ 开头"
+        if _ENTRY_WILDCARD.search(item):
+            return None, "entries 不支持通配符"
+        if item.endswith("/"):
+            return None, "目录条目不要带结尾斜杠"
+        if any(seg in ("", ".", "..") for seg in item.split("/")):
+            return None, "entries 不能包含空段、. 或 .. 路径穿越"
+        if item in seen:
+            return None, "entries 含重复条目：" + item
+        seen.add(item)
+        out.append(item)
+    return out, ""
+
+
+def _prune_covered_entries(entries, full):
+    """Remove descendants already covered by a selected ancestor directory.
+
+    The public contract keeps "directory entry = whole subtree"; redundant
+    ancestor+descendant parameters therefore mean the same thing and must not
+    produce duplicate work or a rejection.
+    """
+    selected = set(entries)
+    dirs = {(e.get("path") or "").rstrip("/") for e in full if e.get("isDir")}
+    kept = []
+    for name in entries:
+        parts = name.split("/")
+        covered = any(
+            "/".join(parts[:i]) in selected and "/".join(parts[:i]) in dirs
+            for i in range(1, len(parts)))
+        if not covered:
+            kept.append(name)
+    return kept
+
+
+def _selected_bytes(entries, full):
+    """Membership + selected-size check. A selected directory covers its whole
+    subtree (the engine's own rule for a directory name)."""
+    known = {(e.get("path") or "").rstrip("/"): e for e in full}
+    missing = [name for name in entries if name not in known]
+    if missing:
+        raise ValueError("条目不属于该压缩包：" + missing[0])
+
+    def selected(path):
+        norm = (path or "").rstrip("/")
+        return any(norm == sel or norm.startswith(sel + "/") for sel in entries)
+
+    return sum(int(e.get("size") or 0) for e in full
+               if not e.get("isDir") and selected(e.get("path") or ""))
+
+
+class _ArcaHTTPServer(ThreadingHTTPServer):
+    """A client that disconnects mid-request (e.g. a UI/probe closing its
+    socket while the app shuts down) is not a server error.  Only these two
+    connection-teardown exceptions are kept out of the log; every other
+    uncaught exception still goes through socketserver's normal traceback."""
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Server:
     def __init__(self, ctx: AppContext):
         cls = type("BoundHandler", (Handler,), {"ctx": ctx})
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), cls)
+        self.httpd = _ArcaHTTPServer(("127.0.0.1", 0), cls)
         self.httpd.daemon_threads = True
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
 
@@ -851,5 +992,13 @@ class Server:
     def stop(self):
         try:
             self.httpd.shutdown()
+        except Exception:
+            pass
+        try:
+            self.httpd.server_close()
+        except Exception:
+            pass
+        try:
+            self.thread.join(timeout=5)
         except Exception:
             pass

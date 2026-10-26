@@ -138,7 +138,7 @@ class ScanTests(unittest.TestCase):
     def test_real_http_task_card(self):
         print("UI FIXTURE: 16 worker scan checkpoints acknowledged by real task-card polling; not a natural performance measurement")
         ctx = server.AppContext(engine.Engine(), Settings(), str(ROOT / "src/arca/web"))
-        ctx.settings.patch({"checkEngineUpdates": False})
+        ctx.settings.patch({"checkEngineUpdates": False, "suppressSound": True})
         service = server.Server(ctx)
         service.start()
         original_scan = util.scan_inputs

@@ -228,6 +228,24 @@ def main():
         time.sleep(2.0)
         shoot(ws, "02-extract.png")
 
+        # ---- A1: unlock the archive, then show the selection model with one
+        #      entry unchecked (the primary button follows the selection count)
+        ws.call("Runtime.evaluate", {"expression": """
+          const pw = document.querySelector('#x-pw');
+          pw.value = 'Arca#2026';
+          pw.dispatchEvent(new Event('input', {bubbles: true}));
+          document.querySelector('#x-verify').click();
+          'ok'
+        """, "returnByValue": True})
+        time.sleep(1.6)
+        ws.call("Runtime.evaluate", {"expression": """
+          const box = document.querySelectorAll('#x-table .row-sel')[1];
+          if (box) box.click();
+          'ok'
+        """, "returnByValue": True})
+        time.sleep(0.6)
+        shoot(ws, "15-extract-select.png")
+
         # ---- recovery records: the chip plus its two menu entries
         zres = api(port, token, "/compress", {
             "inputs": [src], "name": "季度素材备份", "destDir": DEMO,
