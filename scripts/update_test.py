@@ -292,8 +292,24 @@ def main():
         # ------------------------------------------------------- 4. skip a version
         ui.js("document.querySelector('#btn-settings').click()")
         time.sleep(0.5)
+        SETTINGS = "!!document.querySelector('.sheet[aria-label=\"设置\"]')"
         ui.click_sel("#set-updnow")
         check("设置里「检查更新…」也能打开", ui.wait_dialog(20))
+        check("检查更新不会关掉设置页", ui.js(SETTINGS))
+        check("更新对话框叠在设置页之上", ui.js("""(() => {
+          const sheets = [...document.querySelectorAll('.sheet-back')];
+          const top = sheets[sheets.length - 1];
+          return sheets.length === 2 && top
+            && top.querySelector('.sheet').getAttribute('aria-label') === '引擎更新'
+            && sheets[0].querySelector('.sheet').getAttribute('aria-label') === '设置';
+        })()"""))
+        ui.key("Escape", "Escape", 27)
+        time.sleep(0.7)
+        check("Esc 只关闭最上层的更新对话框", not ui.js("!!document.querySelector('.sheet.upd')"))
+        check("Esc 之后设置页仍然打开", ui.js(SETTINGS))
+        ui.click_sel("#set-updnow")
+        check("设置页内可再次打开更新对话框", ui.wait_dialog(20))
+        check("再次打开后设置页仍在其下", ui.js(SETTINGS))
         if ui.js("!!document.querySelector('.sheet.upd')"):
             ui.click_sel("#upd-skip")
             time.sleep(0.6)
@@ -301,6 +317,7 @@ def main():
             check("跳过会记住版本号", cfg.get("engineSkipVersion") == LATEST,
                   str(cfg.get("engineSkipVersion")))
             check("跳过会关闭对话框", not ui.js("!!document.querySelector('.sheet.upd')"))
+            check("跳过不关闭设置页", ui.js(SETTINGS))
 
             ws.call("Page.reload")
             time.sleep(2.4)

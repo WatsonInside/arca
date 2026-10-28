@@ -2122,9 +2122,19 @@ function modalize(back) {
   (firstFocus || back).focus({ preventScroll: true });
   return () => {
     back.removeEventListener('keydown', onKey);
-    if (shell && 'inert' in shell) shell.inert = false;
+    // Sheets stack (settings → update dialog). Removing the top one must not
+    // re-enable the shell or drop focus while a sheet underneath is still up.
+    const underneath = [...document.querySelectorAll('.sheet-back')].filter((el) => el !== back);
+    if (shell && 'inert' in shell) shell.inert = underneath.length > 0;
     if (opener && opener.isConnected && opener.focus) opener.focus({ preventScroll: true });
   };
+}
+
+/** Escape belongs to the topmost sheet only: closing an update dialog opened
+ *  from settings must not take the settings sheet down with it. */
+function topSheet(back) {
+  const sheets = [...document.querySelectorAll('.sheet-back')];
+  return sheets[sheets.length - 1] === back;
 }
 
 /** Small decision dialog: resolves with the chosen value, or null on cancel. */
@@ -2372,7 +2382,7 @@ async function openSettings(focus) {
   back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-close]')) close(); });
   back._close = close;   // 让内部动作（改默认打开方式）能干净地关掉再重开
   function onKey(e) {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape' && topSheet(back)) close();
   }
   document.addEventListener('keydown', onKey);
 
@@ -2491,13 +2501,38 @@ async function openSettings(focus) {
     e.currentTarget.setAttribute('aria-checked', String(next));
     patchSettings({ checkAppUpdates: next });
   };
-  $('#set-updnow', back).onclick = async () => {
-    close();
-    const info = await checkEngineUpdate({ refresh: true, verbose: true });
-    if (!info) return;
-    if (!info.ok) { toast(info.error || '检查更新失败', 'err'); return; }
-    if (info.available) openEngineUpdate(info);
-    else toast(`已是最新版本 7-Zip ${info.latest || info.current}`, 'ok');
+  $('#set-updnow', back).onclick = async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '检查中…';
+    try {
+      // The sheet stays open while the check runs; the dialog stacks on top
+      // instead of replacing settings, so closing it lands back here.
+      const info = await checkEngineUpdate({ refresh: true, verbose: false });
+      if (!info) return;
+      if (!info.ok) { toast(info.error || '检查更新失败', 'err'); return; }
+      if (!info.available) { toast(`已是最新版本 7-Zip ${info.latest || info.current}`, 'ok'); return; }
+      openEngineUpdate(info, {
+        afterDone: async () => {
+          try {
+            const m = await api('/meta');
+            state.meta = m;
+            renderEngineBadge();
+            const small = btn.closest('.sheet-row')?.querySelector('small');
+            if (small) {
+              small.textContent = `${m.engine?.engine || '7-Zip'} ${m.engine?.engineVersion || '?'}`
+                + ` · ${m.engine?.rarEncode ? 'RAR 可创建' : 'RAR 只读'}`
+                + (m.engine?.engineSource === 'user' ? ' · 已使用应用外安装版本' : '');
+            }
+          } catch (_) { /* the dialog already showed the result */ }
+        },
+      });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   };
   async function loadAppUpdate(refresh = false) {
     const info = (await api('/appupdate' + (refresh ? '?refresh=1' : ''))).update;
@@ -2852,7 +2887,7 @@ function openUpdateSheet(info, opts) {
     }
   };
   function onKey(e) {
-    if (e.key === 'Escape' && !busy) close();
+    if (e.key === 'Escape' && !busy && topSheet(back)) close();
   }
   document.addEventListener('keydown', onKey);
   back.addEventListener('click', (e) => {
