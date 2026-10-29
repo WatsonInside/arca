@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,13 @@ ENV.update({
 })
 
 CREATE_FORMATS = ("zip", "7z", "rar", "tar.zst")
+
+# T04c: hard safety caps.  The UI only ever needs the first 800 rows;
+# these caps exist so a hostile/fuzzed archive cannot make the app
+# collect an unbounded listing in memory.  They are intentionally
+# fixed (no settings toggle) and normal archives are far below them.
+MAX_LIST_ENTRIES = 200_000
+MAX_SYNC_BYTES = 64 << 20
 
 LEVEL_STEPS = (0, 1, 3, 5, 7, 9)          # UI slider position -> -mx
 METHOD_LABELS = {
@@ -213,9 +221,63 @@ class Engine:
     # ------------------------------------------------------------------- basics
     @staticmethod
     def _run_sync(cmd, timeout=60) -> str:
-        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, env=ENV, timeout=timeout)
-        return p.stdout.decode("utf-8", "replace")
+        """Run a short/listing command and collect its output with hard caps.
+
+        T04c: metadata output is bounded by ``MAX_SYNC_BYTES`` and ``timeout``
+        so a crafted archive cannot make the app build an unbounded log.  On
+        overflow the child is terminated and a clear Chinese error is raised
+        instead of silently truncating the listing.
+        """
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, env=ENV, bufsize=0)
+        chunks: list[bytes] = []
+        total = 0
+        deadline = time.time() + timeout
+        selector = selectors.DefaultSelector()
+        try:
+            selector.register(p.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                if not selector.select(timeout=min(0.5, remaining)):
+                    if p.poll() is not None:
+                        continue
+                    continue
+                chunk = os.read(p.stdout.fileno(), 1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_SYNC_BYTES:
+                    raise EngineError(
+                        f"归档元数据超过上限（{MAX_SYNC_BYTES >> 20} MiB），已停止读取")
+                chunks.append(chunk)
+        finally:
+            try:
+                selector.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if p.poll() is None:
+                try:
+                    p.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    p.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    try:
+                        p.kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        p.wait(timeout=3)
+                    except Exception:  # noqa: BLE001
+                        pass
+            try:
+                p.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return b"".join(chunks).decode("utf-8", "replace")
 
     def info(self) -> dict:
         local = updates.installed() or {}
@@ -325,6 +387,9 @@ class Engine:
                     return None
             with zipfile.ZipFile(entry) as archive:
                 infos = archive.infolist()
+                if len(infos) > MAX_LIST_ENTRIES:
+                    raise EngineError(
+                        f"归档条目数超过上限（{MAX_LIST_ENTRIES:,}），暂不支持")
                 decoded = []
                 for zi in infos:
                     archive.fp.seek(zi.header_offset)
@@ -386,6 +451,9 @@ class Engine:
             cmd.insert(1, "-p" + password)
         out = self._run_sync(cmd, timeout=120)
         meta, entries = _parse_slt(out)
+        if len(entries) > MAX_LIST_ENTRIES:
+            raise EngineError(
+                f"归档条目数超过上限（{MAX_LIST_ENTRIES:,}），暂不支持")
 
         needs_password = bool(re.search(r"(Wrong password|Enter password|encrypted archive)",
                                         out, re.I))

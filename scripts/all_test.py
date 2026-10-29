@@ -40,7 +40,7 @@ SUITES = [
     {"name": "compress-space", "kind": "unittest", "script": "compress_space_test", "deps": ["engine"], "min": 15},
     {"name": "compress-scan", "kind": "passed_failed", "script": "compress_scan_test", "deps": ["engine"], "min": 8},
     {"name": "inspect-cache", "kind": "unittest", "script": "inspect_cache_test", "deps": [], "min": 10},
-    {"name": "zip-inspect", "kind": "unittest", "script": "zip_inspect_test", "deps": [], "min": 9},
+    {"name": "zip-inspect", "kind": "unittest", "script": "zip_inspect_test", "deps": [], "min": 15},
     {"name": "extract-list", "kind": "passed_failed", "script": "extract_list_test", "deps": ["engine"], "min": 5},
     {"name": "concurrency", "kind": "passed_failed", "script": "concurrency_test", "deps": ["engine"], "min": 3},
     {"name": "keyring", "kind": "unittest", "script": "keyring_test", "deps": [], "min": 45},

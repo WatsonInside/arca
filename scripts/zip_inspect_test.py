@@ -128,5 +128,34 @@ class ZipInspectTests(unittest.TestCase):
         self.assertEqual(response["info"]["counts"]["files"], 1)
 
 
+    # ------------------------------------------------- T04c hard caps
+    def test_fast_zip_listing_entry_cap(self):
+        path = self.archive(names=("a/", "a/b.txt", "c.txt"))
+        with patch.object(engine, "MAX_LIST_ENTRIES", 2):
+            with self.assertRaises(engine.EngineError) as ctx:
+                self.engine._inspect_zip(str(path), str(path), full=True)
+        self.assertIn("条目数超过上限", str(ctx.exception))
+
+    def test_7zz_listing_entry_cap(self):
+        path = self.archive(names=("a/", "a/b.txt", "c.txt"))
+        with patch.object(engine, "MAX_LIST_ENTRIES", 2):
+            with self.assertRaises(engine.EngineError) as ctx:
+                self.engine._inspect_7zz(str(path), str(path))
+        self.assertIn("条目数超过上限", str(ctx.exception))
+
+    def test_sync_output_byte_cap(self):
+        with patch.object(engine, "MAX_SYNC_BYTES", 1024):
+            with self.assertRaises(engine.EngineError) as ctx:
+                engine.Engine._run_sync(
+                    [sys.executable, "-c", "import sys;sys.stdout.write('x'*200000)"],
+                    timeout=30)
+        self.assertIn("元数据超过上限", str(ctx.exception))
+
+    def test_sync_timeout_is_bounded(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            engine.Engine._run_sync(
+                [sys.executable, "-c", "import time;time.sleep(10)"], timeout=0.5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
