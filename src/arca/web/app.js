@@ -2578,6 +2578,11 @@ async function openSettings(focus) {
       if (!info) return;
       if (!info.ok) { toast(info.error || '检查更新失败', 'err'); return; }
       if (!info.available) { toast(`已是最新版本 7-Zip ${info.latest || info.current}`, 'ok'); return; }
+      // 检查期间按钮被禁用会丢掉焦点；openUpdateSheet 以当前 activeElement
+      // 作为关闭后的焦点恢复目标，所以先还焦点再叠对话框。
+      btn.disabled = false;
+      btn.textContent = label;
+      btn.focus({ preventScroll: true });
       openEngineUpdate(info, {
         afterDone: async () => {
           try {

@@ -135,6 +135,14 @@ class UI:
                 "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
         time.sleep(0.2)
 
+    def wait_js(self, expression, seconds=2.5):
+        end = time.time() + seconds
+        while time.time() < end:
+            if self.js(expression):
+                return True
+            time.sleep(0.05)
+        return False
+
     def wait_dialog(self, seconds=25.0):
         end = time.time() + seconds
         while time.time() < end:
@@ -334,7 +342,7 @@ def main():
           return !!sheet && sheet.inert === false && !sheet.hasAttribute('aria-hidden')
             && modals.length === 1 && sheet.contains(modals[0]);
         })()"""))
-        check("Esc 关闭更新对话框后焦点回到设置页内", ui.js("""(() => {
+        check("Esc 关闭更新对话框后焦点回到设置页内", ui.wait_js("""(() => {
           const sheet = document.querySelector('.sheet[aria-label="设置"]');
           return !!(sheet && sheet.contains(document.activeElement));
         })()"""))

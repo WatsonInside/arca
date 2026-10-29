@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import threading
 import time
 import uuid
 
+from . import archtxn
 from . import engine as eng
 from . import par2 as par2_mod
 from . import procs
@@ -128,6 +130,11 @@ class JobManager:
         except OSError:
             pass
         self.interrupted = self._recover_interrupted()
+        # T06: 处理上次进程崩溃在“覆盖压缩切换”中途留下的 manifest。
+        try:
+            archtxn.recover_pending(engine)
+        except Exception as exc:  # noqa: BLE001
+            print("[arca] 恢复未完成的覆盖压缩失败: %r" % (exc,), file=sys.stderr)
         self._workers = [threading.Thread(target=self._loop, daemon=True)
                          for _ in range(2)]
         for worker in self._workers:
@@ -567,8 +574,10 @@ def make_compress_task(mgr: JobManager, opts: dict):
         entry = mgr.engine.resolve(opts["output"])
         files = mgr.engine.parts(entry) or [entry]
         files = [f for f in files if os.path.exists(f)]
-        _finish_compress(job, mgr, opts, total, files, entry,
-                         eng.describe_error(log, code) if code == 1 else "")
+        warning = eng.describe_error(log, code) if code == 1 else ""
+        if _txn_commit(job, mgr, opts, total, files, warning):
+            return
+        _finish_compress(job, mgr, opts, total, files, entry, warning)
     return task
 
 
@@ -601,13 +610,18 @@ def _compress_zstd(job: Job, mgr: JobManager, opts: dict, inputs: list[str],
         raise eng.EngineError("压缩没有生成文件")
     job.update(log=f"zstd {mgr.engine.zstd_version}: {seen['files']} 个文件, "
                    f"{out.get('seconds', 0):.1f}s")
+    if _txn_commit(job, mgr, opts, total, [entry], ""):
+        job.update(result={**job.result, "zstd": mgr.engine.zstd_version,
+                           "files": seen["files"]})
+        return
     _finish_compress(job, mgr, opts, total, [entry], entry, "")
     job.update(result={**job.result, "zstd": mgr.engine.zstd_version,
                        "files": seen["files"]})
 
 
 def _finish_compress(job: Job, mgr: JobManager, opts: dict, total: int,
-                     files: list[str], entry: str, warning: str):
+                     files: list[str], entry: str, warning: str,
+                     skip_par2: bool = False):
     """Record the archive, then add recovery data when the user asked for it."""
     size = sum(os.path.getsize(f) for f in files)
     job.update(outputs=files, destPath=os.path.dirname(entry),
@@ -620,6 +634,8 @@ def _finish_compress(job: Job, mgr: JobManager, opts: dict, total: int,
     job.update(sizeText=util.human_size(size))
     if job.total and job.percent < 99:
         job.progress(100)
+    if skip_par2:
+        return
 
     percent = int(opts.get("par2Percent") or 0)
     if percent <= 0 or not mgr.engine.par2:
@@ -645,6 +661,49 @@ def _finish_compress(job: Job, mgr: JobManager, opts: dict, total: int,
                    "single": single,
                    "index": rec["made"][0] if rec["made"] else "",
                }})
+
+
+def _txn_commit(job: Job, mgr: JobManager, opts: dict, total: int,
+                files: list[str], warning: str) -> bool:
+    """T06：覆盖压缩先回读校验，再以同卷 rename 把 staging 换成正式名。"""
+    txn = opts.get("_txn")
+    if txn is None:
+        return False
+    if not files:
+        archtxn.abort(txn)
+        raise eng.EngineError("压缩没有生成文件")
+    job.update(phase="正在校验新归档")
+    try:
+        archtxn.verify(mgr.engine, files, opts.get("password") or "",
+                      opts.get("format") or "")
+    except Exception:
+        archtxn.abort(txn)
+        raise
+    if job.cancel.is_set():
+        archtxn.abort(txn)
+        raise RuntimeError("已取消")
+    job.update(phase="正在替换旧归档")
+    try:
+        committed = archtxn.commit(txn, mgr.engine, files, cancel=job.cancel)
+    except RuntimeError:
+        archtxn.abort(txn)
+        raise
+    except Exception:
+        archtxn.abort(txn)
+        raise
+    _finish_compress(job, mgr, opts, total, committed["files"],
+                     txn.target, warning, skip_par2=True)
+    extra = {}
+    if committed.get("par2"):
+        extra["par2"] = committed["par2"]
+        made = committed["par2"].get("made") or []
+        if made:
+            job.update(outputs=committed["files"] + made)
+    if committed.get("par2Error"):
+        extra["par2Error"] = committed["par2Error"]
+    if extra:
+        job.update(result={**job.result, **extra})
+    return True
 
 
 def make_extract_task(mgr: JobManager, opts: dict):
@@ -947,6 +1006,12 @@ def _par2_reason(log: str) -> str:
 
 def _cleanup_outputs(opts, after_ts: float | None = None):
     """Remove half-written volumes after a cancelled job."""
+    txn = opts.get("_txn")
+    if txn is not None:
+        try:
+            archtxn.abort(txn)
+        except Exception:  # noqa: BLE001
+            pass
     try:
         entry = opts["output"]
         base = entry[:-4] if re.search(r"\.\d{3}$", entry) else entry

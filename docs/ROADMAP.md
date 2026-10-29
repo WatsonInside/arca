@@ -123,7 +123,7 @@
 ## C. 工程项（支撑 A/B 落地）
 
 ### C1. CI 化
-- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 28 套件的
+- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 29 套件的
   一条命令全量门禁（含 headless 实例编排与隔离 HOME）；`make verify` / `make test-fast`
   提供快速预检。仍无远端 CI——本仓库没有 CI 运行记录，`make test` 是唯一完整可信信号。
 - 两轮执行都靠人工贴命令 + 对方手工跑门禁。把 `node --check` /
@@ -172,6 +172,7 @@
 | 中断恢复（崩溃/中断识别 + 确定性回归） | ✅ 2026-10-27 已实现并回归 | 不做自动续传；启动后标为「中断 · 产物可能不完整」，半成品保留不静默删除；`interrupt-recovery` 4 场景进 `make test`（26 套件） |
 | R1 工程收口（T07a 测试 manifest / T03 原子写 / T02 取消重试 / T11 叠层 a11y） | ✅ 2026-10-29 已完成并回归 | `make test` 27 套全绿；缺口：fresh/merge 解压取消的 UI 文案未做真实 Chrome 断言、读屏人工项未做、T03 未做真实断电 |
 | R2 取消/退出语义（T00 契约 / T01 子进程注册与有界收尾） | ✅ 2026-10-29 已完成（T00 待用户/复核确认） | 新增 `shutdown` 套件 10 项；`interrupt-recovery` 增 SIGTERM 场景至 5 项；`make test` 27/27；缺口：真实 Cmd-Q 人工验收、引擎静默子进程为模拟、未做真实断电 |
+| R4 覆盖压缩的可恢复替换（T06） | ✅ 2026-10-29 已完成并回归 | `make test` 29 套全绿；新增 `overwrite-txn` 11 项；覆盖写改为 staging + 同卷 rename，切换前 `7zz t`/`zstd -t` 回读校验，manifest 崩溃前滚，PAR2 best-effort；缺口：非单次原子、跨卷不支持、断电/外部改动未实测 |
 | R3a 写入边界与元数据硬上限（T04c/T04a） | ✅ 2026-10-29 已完成并回归 | `make test` 28 套全绿；新增 `extract-safety` 10 项；zipfix/zst 跳过不安全条目并计数，7zz/RAR 解压前用 `7zz l -slt` 预检并拒绝危险路径/符号链接归档；缺口：真实 RAR 链接未实测、TOCTOU、预检按整包拒绝 |
 | R3b App 自更新两阶段就绪（T05） | ✅ 2026-10-29 已完成并回归 | 页面 `init()` 后上报 `/api/ui-ready`（bridge/DOM/meta/引擎四项），后台线程等待（20 s）后才删旧包，超时/headless 保留旧包与恢复标记；`appupdate` 套件 34 项（新增 ConfirmUpdateTests）；缺口：真实 Cmd-Q/窗口创建失败人工 E2E、ui-ready 为页面自报 |
 | A2 归档追加/删除 | ⬜ 未做（当前唯一功能候选） | 原 A2；限 7z/zip，zipfix 修正名的 zip 禁原地修改 |

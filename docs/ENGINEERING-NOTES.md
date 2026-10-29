@@ -361,7 +361,30 @@ zipfile 快速路径或 `7zz l -slt` 列出条目，路径不安全的归档直�
 即使只选中无关条目，也可能因包里别处有链接而被拒绝。fresh/merge 回滚逻辑不变，
 仍按 T00 处理失败与取消。回归在 `scripts/extract_safety_test.py`（10 项真实 fixture：
 `../`、绝对路径、symlink 条目、既有 symlink 父目录、tar 穿越/链接、7zz 预检、
-干净归档、辅助函数），已接入 `scripts/all_test.py`（28 套件）。
+干净归档、辅助函数），已接入 `scripts/all_test.py`（29 套件）。
+
+**覆盖压缩的可恢复替换（T06，2026-10-29）**：覆盖写不再"先删旧档再压缩"。新集合
+写到目标同目录的隐藏 staging 名（`.<原名>.arca-txn-<job>-<rand>`），压缩完成后先用
+`7zz t` / `zstd -t` 回读校验，再把旧集合 rename 到备份名、staging rename 成正式名，
+最后删备份并生成 PAR2。切换开始前把 manifest 落盘到
+`~/Library/Application Support/Arca/archive-txns/<id>.json`（记录 target、staging、
+旧文件→备份映射、PAR2 配置、phase）。进程在切换中崩溃时，下次启动 `JobManager`
+构造阶段调用 `archtxn.recover_pending()` 幂等前滚：phase=staging 说明压缩没跑完，
+丢弃 staging（旧集合从未被碰过）；phase=switching/cleanup 则补齐"旧→备份"和新名
+rename，删备份、清 manifest。取消/失败只清理 staging 与 manifest，旧集合原样保留。
+PAR2 采用 best-effort：归档切换成功即算成功，PAR2 失败保留新归档、结果带
+`par2Error`，旧 PAR2 随旧集合一起删掉，不出现新旧恢复记录混用。
+边界与限制：这是**单任务级**事务，不宣称多文件集合"单次原子"——能保证的是任一点
+崩溃后可以确定地前滚或丢弃 staging，且不丢旧集合；staging 与目标必须同卷（跨卷
+`os.replace` 会失败，按切换失败回滚处理）；旧集合是否被外部进程改动、manifest 被
+手工篡改、断电导致目录项未刷盘等情形未实测；回读校验对 7z/zip/rar 走 `7zz t`、
+对 tar.zst 走 `zstd -t`，加密档需要密码且只校验可读性，不保证语义等价。
+测试钩子：`ARCA_TXN_FAIL_AT=switch-manifest|switch-old|switch-new|switch-cleanup`
+配合 `ARCA_TXN_CRASH=1` 在指定切换点让进程直接 `_exit(70)`，用于真实重启恢复验证；
+只给测试使用，不是用户设置。回归在 `scripts/overwrite_txn_test.py`（11 项：提交/
+中止/取消、切换前旧档保留、staging 阶段恢复、switch-manifest/old/new 三处崩溃前滚、
+分卷后缀映射、PAR2 失败 best-effort、回读校验拒绝坏档、重复恢复幂等），已接入
+`scripts/all_test.py`（29 套件）。
 
 ### 压缩草稿生命周期与竞态防护（2026-10-27）
 
@@ -424,7 +447,7 @@ zipfile 快速路径或 `7zz l -slt` 列出条目，路径不安全的归档直�
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件，含 `shutdown`）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件，含 `shutdown` 与 `overwrite-txn`）。
 
 ### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
 

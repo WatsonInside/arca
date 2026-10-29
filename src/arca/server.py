@@ -13,6 +13,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import archtxn
 from . import engine as eng
 from . import components
 from . import integration
@@ -668,15 +669,6 @@ class Handler(BaseHTTPRequestHandler):
         dest_dir = body.get("destDir") or os.path.dirname(os.path.abspath(inputs[0]))
         if not os.path.isdir(dest_dir):
             return self._err("保存位置不存在")
-        try:
-            _, need = util.scan_inputs(inputs)
-            free = shutil.disk_usage(dest_dir).free
-        except OSError:
-            pass
-        else:
-            if free < need + 64 * 1024 * 1024:
-                return self._err("磁盘剩余空间不足：还需要约 %s，可用 %s"
-                                 % (util.human_size(need), util.human_size(free)))
         name = util.sanitize_name(body.get("name") or _default_name(inputs))
         ext = _ext_for(fmt)
         if name.lower().endswith(ext):
@@ -685,6 +677,21 @@ class Handler(BaseHTTPRequestHandler):
         par2_percent = int(body.get("par2Percent") or 0)
         if par2_percent and not self.ctx.engine.par2:
             return self._err("生成恢复记录需要 PAR2 组件（设置 → 组件）")
+        overwrite = bool(body.get("overwrite"))
+        try:
+            _, need = util.scan_inputs(inputs)
+            free = shutil.disk_usage(dest_dir).free
+        except OSError:
+            pass
+        else:
+            # T06：覆盖写不再先删旧集合。临时空间按“新集合 + 新 PAR2 +
+            # 余量”检查；旧集合在切换前仍占磁盘（已体现在 free 中）。
+            reserve = need + 64 * 1024 * 1024
+            if overwrite:
+                reserve += int(need * max(0, min(50, par2_percent)) / 100)
+            if free < reserve:
+                return self._err("磁盘剩余空间不足：还需要约 %s，可用 %s"
+                                 % (util.human_size(need), util.human_size(free)))
         opts = {
             "inputs": inputs,
             "output": target,
@@ -709,7 +716,6 @@ class Handler(BaseHTTPRequestHandler):
         if pw and fmt == "zip" and opts["encryptNames"]:
             opts["encryptNames"] = False
         with self.ctx.manager._cv:
-            overwrite = bool(body.get("overwrite"))
             if not overwrite:
                 target = self._unique_target(target, archive=True)
             opts["output"] = target
@@ -717,11 +723,16 @@ class Handler(BaseHTTPRequestHandler):
             job = jobs_mod.Job("compress", label, subtitle=_join_inputs(inputs),
                                destPath=dest_dir, format=fmt.upper(), inputs=inputs,
                                planned=target, secrets=[pw])
+            if overwrite:
+                # T06：旧集合不在这里删除。新档先写隐藏 staging，回读校验
+                # 通过后同卷 rename 替换；切换前失败/取消/崩溃都不碰旧档。
+                txn = archtxn.begin(job.id, target,
+                                    par2_percent=opts["par2Percent"],
+                                    par2_single=opts["par2Single"])
+                opts["output"] = txn.staging
+                opts["_txn"] = txn
             task = jobs_mod.make_compress_task(self.ctx.manager, opts)
-            engine = self.ctx.engine
             def prepared(job):
-                if overwrite and not job.cancel.is_set():
-                    _remove_target(target, engine)
                 task(job)
             self.ctx.manager._targets[job.id] = os.path.realpath(target)
             self.ctx.manager.submit(job, prepared)
