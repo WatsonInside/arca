@@ -396,7 +396,24 @@ stdout，再让 jobs 回滚，避免子进程在回滚后继续写盘。
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（全量 26 套件）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件，含 `shutdown`）。
+
+### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
+
+- 子进程登记：`src/arca/procs.py` 按 worker 线程绑定当前 job id；`engine.run`、
+  `zst`（压缩流/解压流/单文件解压）、`par2._run` 在 Popen 后注册、finally 注销。
+  取消线程只操作已注册的直接子进程，不按进程名或进程组广播。
+- 收尾顺序：terminate → wait 3s → kill → wait → reap。被终止的子进程让阻塞
+  `read()` 返回 EOF，任务线程得以展开收尾并关闭管道；取消线程不跨线程 close。
+- `JobManager.cancel()`：queued 任务立即标记 cancelled（不执行任务体、不产出
+  文件）；running 任务置 `正在取消…` 并在有界时间内回收子进程。压缩取消会
+  清理本任务刚创建、可判定为未完成的归档/分卷；解压保留已解出的文件。
+- `JobManager.shutdown()`：先拒绝新任务，再取消 queued/running、有界等待
+  worker 收尾并清 journal。UI 关最后窗口/Cmd-Q 与 headless SIGTERM/SIGINT
+  走同一入口；语义契约见 [`CANCEL-ROLLBACK.md`](CANCEL-ROLLBACK.md)。
+- 已知边界：活动任务退出时不做“等待/取消”询问，直接取消并退出（有界 8s）；
+  Cmd-Q 人工 E2E 未执行；zstd 的 tar 流取消状态以任务旗标为准，异常文案可能
+  是 ReadError 而非“已取消”。
 
 ### 性能基准与可靠性工具（P2，2026-10-26）
 

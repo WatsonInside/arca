@@ -24,7 +24,7 @@ from AppKit import (
     NSEvent, NSEventMaskLeftMouseDragged, NSEventMaskLeftMouseUp,
     NSEventModifierFlagControl, NSEventTypeLeftMouseDown,
     NSEventTypeLeftMouseDragged, NSEventTypeLeftMouseUp,
-    NSScreen,
+    NSScreen, NSTerminateNow,
     NSViewMinYMargin, NSViewWidthSizable,
     NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskFullSizeContentView,
     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled,
@@ -1197,6 +1197,26 @@ class ArcaDelegate(NSObject):
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
         return True
 
+    def applicationShouldTerminate_(self, app):
+        """Closing the last window / Cmd-Q: stop active work before quitting.
+
+        Children are terminated and reaped (bounded), queued jobs are marked
+        cancelled, and the pending journal is cleaned by each worker's own
+        finally block.  Whatever cannot be stopped in 8s is reported instead
+        of being claimed as finished.
+        """
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None:
+            try:
+                result = ctx.manager.shutdown(timeout=8.0)
+                if not result["ok"]:
+                    print("[arca] 退出时仍有未收尾任务: "
+                          + json.dumps(result["unfinished"], ensure_ascii=False),
+                          file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001 - never block quitting
+                print(f"[arca] 退出收尾失败: {exc!r}", file=sys.stderr)
+        return NSTerminateNow
+
     # ------------------------------------------------- Finder 右键 → 服务
     # The Services machinery sends `selector:userData:error:` with an
     # `NSString **` out parameter.  pyobjc infers `@@:@@@` for a plain method,
@@ -1322,6 +1342,16 @@ def run(argv):
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         while not stop.is_set():
             time.sleep(0.3)
+        # Headless has no window/terminate notification: SIGTERM/SIGINT must
+        # run the same shutdown as the UI quit path.
+        try:
+            result = ctx.manager.shutdown(timeout=10.0)
+            if not result["ok"]:
+                print("[arca] 退出时仍有未收尾任务: "
+                      + json.dumps(result["unfinished"], ensure_ascii=False),
+                      file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[arca] 退出收尾失败: {exc!r}", file=sys.stderr)
         return
 
     app = NSApplication.sharedApplication()

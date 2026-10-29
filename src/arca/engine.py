@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 
+from . import procs
 from . import util
 from . import updates
 from . import zipfix
@@ -619,6 +620,7 @@ class Engine:
             cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, env=ENV, bufsize=0,
         )
+        procs.register(proc)
         chunks = []
         buf = ""
         last = [0.0, 0.0]  # time, percent
@@ -694,6 +696,7 @@ class Engine:
             log = "".join(chunks)
             return code, log
         finally:
+            procs.unregister(proc)
             _reap_process(proc)
 
 

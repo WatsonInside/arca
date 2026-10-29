@@ -25,7 +25,7 @@ import re
 import subprocess
 import threading
 
-from . import util
+from . import procs, util
 
 REDUNDANCY = (3, 5, 10, 15)          # percent presets offered in the UI
 
@@ -183,40 +183,57 @@ def repair(binary: str, par2_file: str, on_progress=None,
 def _run(cmd, cwd=None, on_progress=None, cancel=None, expect=""):
     proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    procs.register(proc)
     chunks, made = [], []
     buf = ""
     last = 0.0
-    while True:
-        if cancel is not None and cancel.is_set():
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except Exception:
-                proc.kill()
-            raise Par2Error("已取消")
-        chunk = proc.stdout.read(4096)
-        if not chunk:
-            break
-        text = chunk.decode("utf-8", "replace")
-        chunks.append(text)
-        buf += text
-        lines = re.split(r"[\r\n]+", buf)
-        buf = lines.pop() if lines else ""
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            made.append(line)
-            m = re.search(r"(\d{1,3})[.,](\d)\s*%", line) or re.search(r"(\d{1,3})\s*%", line)
-            if m and on_progress:
+    try:
+        while True:
+            if cancel is not None and cancel.is_set():
+                proc.terminate()
                 try:
-                    val = float(m.group(1) + ("." + m.group(2) if m.lastindex == 2 else ""))
-                except ValueError:
+                    proc.wait(timeout=3)
+                except Exception:
+                    proc.kill()
+                raise Par2Error("已取消")
+            chunk = proc.stdout.read(4096)
+            if not chunk:
+                break
+            text = chunk.decode("utf-8", "replace")
+            chunks.append(text)
+            buf += text
+            lines = re.split(r"[\r\n]+", buf)
+            buf = lines.pop() if lines else ""
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
-                last = max(last, val)
-                on_progress(min(99.0, last), line[:80])
-    proc.wait()
-    return proc.returncode, "".join(chunks), made
+                made.append(line)
+                m = re.search(r"(\d{1,3})[.,](\d)\s*%", line) or re.search(r"(\d{1,3})\s*%", line)
+                if m and on_progress:
+                    try:
+                        val = float(m.group(1) + ("." + m.group(2) if m.lastindex == 2 else ""))
+                    except ValueError:
+                        continue
+                    last = max(last, val)
+                    on_progress(min(99.0, last), line[:80])
+        proc.wait()
+        if cancel is not None and cancel.is_set():
+            # The child may have died because the cancel thread terminated it:
+            # returning a plain exit code here would hide the cancel from the
+            # caller (all engines must report the same "已取消" semantics).
+            raise Par2Error("已取消")
+        return proc.returncode, "".join(chunks), made
+    finally:
+        procs.unregister(proc)
+        if proc.poll() is not None:
+            for name in ("stdout", "stdin", "stderr"):
+                stream = getattr(proc, name, None)
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
 
 def _hint(log: str) -> str:

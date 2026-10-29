@@ -9,6 +9,7 @@ import uuid
 
 from . import engine as eng
 from . import par2 as par2_mod
+from . import procs
 from . import util
 from . import keyring
 from . import zipfix
@@ -111,6 +112,9 @@ class JobManager:
         self._buckets: dict[str, str] = {}
         self._busy: set[str] = set()
         self._targets: dict[str, str] = {}
+        # Set by shutdown(): after that point new submits are refused so a
+        # quitting app cannot start work it will never let finish.
+        self._closing = False
         self.history = util.read_json(util.state_path("history.json"), [])
         self.history = self.history[:40] if isinstance(self.history, list) else []
         # In-flight journal: one small JSON per queued/running job, removed when
@@ -132,6 +136,8 @@ class JobManager:
     # ------------------------------------------------------------------ public
     def submit(self, job: Job, task) -> Job:
         with self._cv:
+            if self._closing:
+                raise RuntimeError("应用正在退出，不能提交新任务")
             directory = job.destPath if job.kind in ("compress", "extract") else os.path.dirname(job.srcPath)
             self._buckets[job.id] = os.path.realpath(job.bucket or directory)
             self.jobs[job.id] = job
@@ -155,32 +161,108 @@ class JobManager:
             return list(self.history[:limit])
 
     def active_count(self) -> int:
-        return sum(j["status"] in ("queued", "running") for j in self.list())
-
-    def cancel(self, job_id: str) -> bool:
-        with self._cv:
-            job = self.jobs.get(job_id)
-            if job and job.to_dict()["status"] in ("queued", "running"):
-                job.cancel.set()
-                job.update(phase="正在取消…")
-                self._cv.notify_all()
-                return True
-            return False
-
-    def remove(self, job_id: str) -> None:
-        with self._cv:
-            if self.cancel(job_id):
-                return
-            self.jobs.pop(job_id, None)
-            if job_id in self.order:
-                self.order.remove(job_id)
-
-    def active_count(self) -> int:
         """Jobs that would be damaged by replacing the app or its engines."""
         with self._cv:
             return sum(1 for jid in self.order
                        if self.jobs.get(jid) and self.jobs[jid].to_dict()["status"]
                        in ("queued", "running"))
+
+    def cancel(self, job_id: str) -> bool:
+        """Ask a queued/running job to stop and terminate its child processes.
+
+        A queued job has no child and no output, so it is marked cancelled
+        right here instead of waiting for a worker.  For a running job this
+        returns once its registered children were terminated/reaped; the
+        worker finishes the task itself (and clears the journal) afterwards.
+        Never blocks on the task body and never touches outputs.
+        """
+        with self._cv:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            status = job.to_dict()["status"]
+            if status not in ("queued", "running"):
+                return False
+            job.cancel.set()
+            if status == "queued":
+                job.update(status="cancelled", phase="已取消",
+                           finished=time.time(), error="已取消")
+                self._q = [i for i in self._q if i != job_id]
+                self._buckets.pop(job_id, None)
+                self._targets.pop(job_id, None)
+                self._forget_pending(job_id)
+                self._cv.notify_all()
+                return True
+            job.update(phase="正在取消…")
+            self._cv.notify_all()
+        procs.terminate_job(job_id)   # outside the lock: bounded but blocking
+        return True
+
+    def remove(self, job_id: str) -> None:
+        if self.cancel(job_id):
+            return
+        with self._cv:
+            self.jobs.pop(job_id, None)
+            if job_id in self.order:
+                self.order.remove(job_id)
+
+    def shutdown(self, timeout: float = 10.0) -> dict:
+        """Cancel active jobs, reap their children and drain the workers.
+
+        Called from the UI terminate path and from headless SIGTERM/SIGINT so
+        both behave the same.  Bounded by *timeout*: whatever is still running
+        afterwards is reported in ``unfinished`` instead of being claimed as
+        stopped.  Never re-submits or replays jobs.
+        """
+        started = time.time()
+        with self._cv:
+            self._closing = True
+            active = [jid for jid in self.order
+                      if self.jobs.get(jid) and self.jobs[jid].to_dict()["status"]
+                      in ("queued", "running")]
+            # Queued jobs never started: they produce no files and no child, so
+            # they can be finished right here without waiting for a worker.
+            for jid in list(active):
+                job = self.jobs.get(jid)
+                if job is None or job.to_dict()["status"] != "queued":
+                    continue
+                job.cancel.set()
+                job.update(status="cancelled", phase="已取消", finished=time.time(),
+                           error="应用退出，任务已取消")
+                self._q = [i for i in self._q if i != jid]
+                self._buckets.pop(jid, None)
+                self._targets.pop(jid, None)
+                self._forget_pending(jid)
+                active.remove(jid)
+            for jid in active:
+                job = self.jobs.get(jid)
+                if job is not None:
+                    job.cancel.set()
+                    job.update(phase="应用退出，正在取消…")
+            self._cv.notify_all()
+        cancelled = list(active)
+        # Outside the lock: terminate children first so blocked reads unwind.
+        for jid in active:
+            procs.terminate_job(jid)
+        deadline = started + max(0.5, float(timeout))
+        with self._cv:
+            while True:
+                remaining = [jid for jid in self.order
+                             if self.jobs.get(jid) and self.jobs[jid].to_dict()["status"]
+                             in ("queued", "running")]
+                if not remaining or time.time() >= deadline:
+                    break
+                self._cv.wait(min(0.1, max(0.01, deadline - time.time())))
+            unfinished = []
+            for jid in remaining:
+                job = self.jobs.get(jid)
+                if job is None:
+                    continue
+                unfinished.append({"id": jid, "kind": job.kind,
+                                   "status": job.to_dict()["status"]})
+        return {"ok": not unfinished, "cancelled": cancelled,
+                "unfinished": unfinished,
+                "seconds": round(time.time() - started, 3)}
 
     def clear_finished(self) -> None:
         with self._cv:
@@ -345,6 +427,7 @@ class JobManager:
                     continue
                 self._busy.add(bucket)
                 job.update(status="running", started=time.time(), phase="准备中")
+            procs.bind(jid)
             try:
                 job._task(job)  # noqa: SLF001
                 if job.cancel.is_set():
@@ -367,6 +450,8 @@ class JobManager:
                 try:
                     self._record(job)
                 finally:
+                    procs.unbind()
+                    procs.forget(jid)
                     self._forget_pending(jid)
                     with self._cv:
                         self._busy.remove(bucket)

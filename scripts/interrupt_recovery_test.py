@@ -625,6 +625,78 @@ class InterruptRecoveryTests(unittest.TestCase):
         finally:
             app2.stop()
 
+    # ------------------------------------------------------------- scenario 5
+    def test_sigterm_cancels_running_job_without_orphans(self):
+        """Graceful SIGTERM (not SIGKILL): the app must cancel the running job,
+        reap its engine child, clear the journal, and leave no "interrupted"
+        record behind on the next start (T01 acceptance)."""
+        src_dir = self.work / "input"
+        src_dir.mkdir()
+        big = src_dir / "big.bin"
+        make_random(big, 128)
+        src_digest = sha256(big)
+        out = self.work / "out"
+        out.mkdir()
+
+        app = AppInstance(self.work, "term")
+        jid = ""
+        reclaimed = []
+        try:
+            client = app.client()
+            status, body = client.call("/compress", {
+                "inputs": [str(big)], "destDir": str(out), "name": "big",
+                "format": "7z", "level": 3})
+            self.assertEqual(200, status, body)
+            jid = body["job"]["id"]
+            archive = out / "big.7z"
+            self.assertTrue(wait_until(
+                lambda: archive.exists() and archive.stat().st_size >= 1 * MIB,
+                120), "压缩任务没有开始写归档")
+            self.assertEqual(1, len(app.pending_files()),
+                             "运行中应有 pending journal")
+            started = time.monotonic()
+            app.proc.terminate()          # SIGTERM: the graceful path
+            try:
+                app.proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.fail("SIGTERM 后应用未在有界时间内退出")
+            exit_seconds = time.monotonic() - started
+            self.assertLess(exit_seconds, 20)
+            app._close_log()
+            reclaimed = reclaim_group(app.pgid)
+            if reclaimed:
+                print(f"ORPHAN-RECLAIM group={app.pgid} members={reclaimed}",
+                      flush=True)
+        finally:
+            app.stop()
+
+        self.assertEqual([], live_members(app.pgid),
+                         f"优雅退出后仍有子进程：{reclaimed}")
+        self.assertTrue(port_closed(app.port), "退出后端口未回收")
+        self.assertEqual(src_digest, sha256(big), "用户输入文件被改动")
+        self.assertEqual([], app.pending_files(), "优雅退出后 journal 未清理")
+        # Cancelled compress may clean its own half-written archive (T00:
+        # identifiable incomplete output); it must never look like a finished
+        # product.  Whatever remains is frozen and must survive the restart.
+        before = _summarize_tree(out)
+        self.assertLess(before.get("big.7z", 0), 128 * MIB,
+                        "取消中的归档不应被当成完整产物")
+
+        # ---- restart: no interrupted / done record, retry not replayed ------
+        app2 = AppInstance(self.work, "term-restart")
+        try:
+            client = app2.client()
+            hits = [h for h in client.history() if h.get("id") == jid]
+            self.assertEqual([], hits,
+                             f"优雅退出不应产生 interrupted 记录：{hits}")
+            self.assertEqual([], app2.pending_files())
+            self.assertEqual([], client.jobs())
+            self.assertEqual(before, _summarize_tree(out),
+                             "重启不得删除或改写取消中的产物")
+        finally:
+            app2.stop()
+        self.assertTrue(port_closed(app2.port), "重启实例端口未回收")
+
 
 def setUpModule():
     global _RUN_ROOT

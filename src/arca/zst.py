@@ -24,6 +24,8 @@ import tarfile
 import threading
 import time
 
+from . import procs
+
 from . import util
 
 # UI slider position -> zstd level.  The top two positions both land on 19:
@@ -225,6 +227,7 @@ def compress(paths: list[str], base: str, out_path: str, level: int = 3,
     with open(out_path, "wb") as out:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out,
                                 stderr=subprocess.PIPE, bufsize=0)
+        procs.register(proc)
         try:
             sink = _Counter(proc.stdin, bump)
             files = 0
@@ -295,6 +298,7 @@ def compress(paths: list[str], base: str, out_path: str, level: int = 3,
             except subprocess.TimeoutExpired:
                 raise ZstdError("zstd 压缩进程未退出")
         finally:
+            procs.unregister(proc)
             _reap_child(proc)
 
     if on_progress:
@@ -407,6 +411,7 @@ class _Stream:
                 err.close()
             except OSError:
                 pass
+        procs.unregister(proc)
 
     def __enter__(self):
         return self
@@ -419,6 +424,7 @@ def _decompress_stream(binary: str, path: str, on_bytes=None) -> _Stream:
     proc = subprocess.Popen([binary, "-d", "-q", "-c", path],
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
+    procs.register(proc)
     return _Stream(proc, on_bytes)
 
 
@@ -539,6 +545,7 @@ def _extract_single(binary, path, dest, overwrite, on_progress, cancel) -> dict:
         proc = subprocess.Popen([binary, "-d", "-q", "-c", path],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
+        procs.register(proc)
         try:
             seen = 0
             while True:
@@ -555,7 +562,10 @@ def _extract_single(binary, path, dest, overwrite, on_progress, cancel) -> dict:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 raise ZstdError("zstd 解压进程未退出")
+            if cancel is not None and cancel.is_set():
+                raise ZstdError("已取消")
         finally:
+            procs.unregister(proc)
             _reap_child(proc)
     if on_progress:
         on_progress(100.0, "", 0.0)
