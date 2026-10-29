@@ -413,7 +413,7 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
 旧的后端 `POST /api/jobs/retry` 仍保留（供既有客户端/套件显式调用），但 UI
 不再走它；两者都不会在无人确认时自动重放。回归 `scripts/retry_plan_test.py`
 （8 项：白名单、journal v2、恢复 retryable、v1 不重试、缺失源/条目契约），已
-接入 `scripts/all_test.py`（31 套件）。
+接入 `scripts/all_test.py`（32 套件）。
 
 ### 压缩草稿生命周期与竞态防护（2026-10-27）
 
@@ -476,7 +476,7 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件、T10 起 31 套件，含 `shutdown`、`overwrite-txn`、`single-instance` 与 `retry-plan`）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件、T10 起 31 套件、R5b 起 32 套件，含 `shutdown`、`overwrite-txn`、`single-instance`、`retry-plan` 与 `components`）。
 
 ### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
 
@@ -521,6 +521,32 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   超时保留、就绪确认、无标记不动作、无 updater 不动作），并把
   `test_http_server_cached_apply_end_to_end` 改为真实 POST ui-ready 后等待
   异步清理；套件共 34 项通过。
+
+### 更新链路加固（R5b：T13/T14/T15，2026-10-29）
+
+- **App 自更新磁盘缓存**（`arca/appupdate.py`）：`state/appupdate-cache.json` 按 repo
+  隔离保存 release 快照与 ETag/Last-Modified；命中 TTL 直接返回，过期用条件请求，
+  304 复用缓存；repo 切换不会误用别的仓库缓存；损坏缓存直接忽略。`apply` 前如果缓存
+  过期（600 s）或上次检查已被标 stale，会强制在线重新校验，失败即拒绝安装
+  （「更新信息已过期，请联网后重新检查应用更新」）；stale 只用于展示。
+- **7-Zip 双源**（`arca/updates.py`）：官网页面仍是主源，解析失败才回退
+  `api.github.com` 的 releases/latest；两个来源的下载地址都必须与预期资产名一致，
+  且落在 `www.7-zip.org` / `github.com` / `objects.githubusercontent.com` /
+  `release-assets.githubusercontent.com` 的 HTTPS 域内；预发布/草稿版本一律排除。
+  GitHub 资产没有可信 digest 时无法据此安装（官网来源才有 SHA256 摘要；未引入
+  不可验证的“弱校验”）。
+- **组件更新**（`arca/components.py`）：`Zstd`/`Par2` 的 remote 现在会转发 `force`；
+  GitHub releases 列表过滤 draft/prerelease、校验 tag 格式，网络失败时返回带
+  `stale` 的缓存（只展示，安装仍须联网重新确认）；API 响应上限 5 MiB，源码包下载
+  上限 64 MiB，Content-Length 与实际读取都检查，截断/超限会删除 `.part` 重来；
+  安装二进制改为「临时文件 → chmod/fsync → 同卷 `os.replace`」，失败保留旧版。
+  7-Zip 引擎更新安装也补了 fsync 与临时文件清理。
+- 新增 `components` 套件 15 项（双源/白名单/缓存/上限/原子安装），`appupdate` 套件
+  扩到 41 项（磁盘缓存重启、304、repo 隔离、403/429 stale、安装前强制刷新）。
+- 缺口：GitHub API 与官网解析都只在本地 fixture/mocked 响应下验证，未做真实断网/限流
+  端到端；`zstd`/`par2` 的“源码编译安装”未在本轮真实编译验证（沿用既有 recipe）；
+  自定义 repo（非 owner/repo）仍是信任输入，不做额外签名校验（设计如此：自更新资产
+  校验 SHA256，但信任来源是配置的 GitHub 仓库）。
 
 ### 性能基准与可靠性工具（P2，2026-10-26）
 

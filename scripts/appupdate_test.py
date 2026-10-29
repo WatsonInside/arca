@@ -376,6 +376,119 @@ class Tests(unittest.TestCase):
         self.assertTrue(foreign.exists(), 'only our own pattern is touched')
 
 
+class DiskCacheTests(unittest.TestCase):
+    """T13：磁盘缓存、条件请求 304、repo 隔离、stale 禁止安装。"""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(dir=ROOT / 'build')
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.bundle = self.make_bundle(self.root / 'Arca.app', '1.0.0')
+        for target, name, value in [(a, 'bundle_path', lambda: self.bundle),
+                                    (a.util, 'state_path', lambda name: str(self.root / name))]:
+            mock = patch.object(target, name, side_effect=value)
+            mock.start()
+            self.addCleanup(mock.stop)
+        self.settings = settings.Settings()
+        self.settings.patch({'appUpdateRepo': 'owner/repo'})
+        self.updater = a.Updater(self.settings)
+        self.name = 'Arca-1.0.1-mac.tar.xz'
+        self.url = a.asset_url('owner/repo', 'v1.0.1', self.name)
+        self.asset = {'name': self.name, 'browser_download_url': self.url,
+                      'digest': 'sha256:' + 'a' * 64}
+        self.release = {'tag_name': 'v1.0.1', 'assets': [self.asset]}
+
+    def make_bundle(self, path, version):
+        (path / 'Contents/MacOS').mkdir(parents=True)
+        (path / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleShortVersionString': version,
+            'CFBundleIdentifier': a.util.BUNDLE_ID}))
+        executable = path / 'Contents/MacOS/Arca'
+        executable.write_text('#!/bin/sh\nexit 0\n')
+        executable.chmod(0o755)
+        return path
+
+    def test_disk_cache_survives_restart_without_network(self):
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            self.assertTrue(self.updater.check()['available'])
+        restarted = a.Updater(self.settings)
+        with patch.object(a, '_read', side_effect=AssertionError('network used')):
+            info = restarted.check()
+        self.assertTrue(info['ok'])
+        self.assertTrue(info['available'])
+        self.assertFalse(info['stale'])
+
+    def test_conditional_304_reuses_cache(self):
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            self.updater.check()
+        data = dict(self.updater.cached)
+        data['repo'] = 'owner/repo'
+        a._save_repo_cache('owner/repo', time.time() - 99999, 'W/"etag"', '', data)
+        self.updater.cached = None
+        self.updater.checked_at = 0
+        with patch.object(a, '_open_conditional', return_value=None) as cond, \
+                patch.object(a, '_read', side_effect=AssertionError('should not refetch')):
+            info = self.updater.check()
+        cond.assert_called_once()
+        self.assertTrue(info['ok'])
+        self.assertTrue(info['available'])
+        self.assertFalse(info['stale'])
+
+    def test_repo_switch_does_not_reuse_other_repo_cache(self):
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            self.updater.check()
+        self.settings.patch({'appUpdateRepo': 'other/repo'})
+        with patch.object(a, '_read', side_effect=a.UpdateError('无法连接更新服务器')):
+            info = self.updater.check()
+        self.assertFalse(info['ok'])
+        self.assertNotIn('latest', info)
+
+    def test_corrupt_disk_cache_is_ignored(self):
+        path = a._app_cache_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{not json', encoding='utf-8')
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            info = self.updater.check()
+        self.assertTrue(info['ok'])
+        self.assertTrue(info['available'])
+
+    def test_403_429_and_offline_mark_cache_stale(self):
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            self.updater.check()
+        data = dict(self.updater.cached)
+        data['repo'] = 'owner/repo'
+        a._save_repo_cache('owner/repo', time.time() - 99999, '', '', data)
+        self.updater.checked_at = 0
+        self.updater.cached = None
+        for message in ('HTTP 429', 'HTTP 403', '无法连接更新服务器'):
+            with patch.object(a, '_read', side_effect=a.UpdateError(message)):
+                info = self.updater.check()
+            self.assertTrue(info['ok'])
+            self.assertTrue(info['stale'])
+            self.assertIn(message, info['error'])
+        # stale 允许展示，但安装前必须重新在线校验，失败即拒绝。
+        with patch.object(a, '_read', side_effect=a.UpdateError('HTTP 429')), \
+                self.assertRaises(a.UpdateError):
+            self.updater.apply('1.0.1')
+
+    def test_prerelease_release_rejected(self):
+        release = dict(self.release, prerelease=True)
+        with patch.object(a, '_read', return_value=json.dumps(release).encode()):
+            info = self.updater.check()
+        self.assertFalse(info['ok'])
+        self.assertIn('预发布', info['error'])
+
+    def test_apply_refresh_verifies_version_and_digest(self):
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):
+            self.updater.check()
+        # 过期缓存：安装前强制重新在线校验（拿到 304 视为仍然新鲜）。
+        self.updater.checked_at = time.time() - a.APPUPDATE_APPLY_MAX_AGE - 1
+        with patch.object(a, '_read', return_value=json.dumps(self.release).encode()), \
+                patch.object(a, '_open_conditional', return_value=None), \
+                patch.object(a.Installer, 'start', lambda inst: inst.snapshot()):
+            self.updater.apply('1.0.1')
+        self.assertIsNotNone(self.updater.installer)
+
 class ConfirmUpdateTests(unittest.TestCase):
     """T05：页面就绪确认的策略（server.confirm_app_update）。"""
 

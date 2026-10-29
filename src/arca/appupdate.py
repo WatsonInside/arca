@@ -85,12 +85,36 @@ def _open(url):
         'User-Agent': 'Arca-AppUpdate', 'Accept': 'application/vnd.github+json'}), timeout=30)
 
 
+_LAST_META = {'etag': '', 'last_modified': ''}
+
+
 def _read(url, limit):
     with _open(url) as response:
+        try:
+            _LAST_META['etag'] = response.headers.get('ETag') or ''
+            _LAST_META['last_modified'] = response.headers.get('Last-Modified') or ''
+        except (AttributeError, OSError):
+            pass
         data = response.read(limit + 1)
     if len(data) > limit:
         raise UpdateError("更新响应过大")
     return data
+
+
+def _open_conditional(url, etag, last_modified):
+    """条件请求；304 时返回 None（调用方复用本地缓存）。"""
+    headers = {'User-Agent': 'Arca-AppUpdate', 'Accept': 'application/vnd.github+json'}
+    if etag:
+        headers['If-None-Match'] = etag
+    if last_modified:
+        headers['If-Modified-Since'] = last_modified
+    opener = urllib.request.build_opener(_GitHubRedirect())
+    try:
+        return opener.open(urllib.request.Request(url, headers=headers), timeout=30)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 304:
+            return None
+        raise
 
 
 def asset_url(repo, tag, name):
@@ -217,6 +241,40 @@ def relaunch_script(pid: int, bundle, log) -> str:
     )
 
 
+APPUPDATE_CACHE_TTL = 3600
+# 明确新鲜度策略：安装前若检查结果早于该窗口，必须重新在线校验。
+APPUPDATE_APPLY_MAX_AGE = 600
+
+
+def _app_cache_file():
+    return Path(util.state_path('appupdate-cache.json'))
+
+
+def _load_repo_cache(repo):
+    raw = util.read_json(str(_app_cache_file()), None)
+    if not isinstance(raw, dict) or raw.get('schema') != 1:
+        return None
+    repos = raw.get('repos')
+    if not isinstance(repos, dict):
+        return None
+    entry = repos.get(repo)
+    if not isinstance(entry, dict) or not isinstance(entry.get('data'), dict):
+        return None
+    return {'ts': float(entry.get('ts') or 0),
+            'etag': str(entry.get('etag') or ''),
+            'last_modified': str(entry.get('last_modified') or ''),
+            'data': entry['data']}
+
+
+def _save_repo_cache(repo, ts, etag, last_modified, data):
+    raw = util.read_json(str(_app_cache_file()), None)
+    if not isinstance(raw, dict) or raw.get('schema') != 1 or not isinstance(raw.get('repos'), dict):
+        raw = {'schema': 1, 'repos': {}}
+    raw['repos'][repo] = {'ts': float(ts), 'etag': etag or '',
+                          'last_modified': last_modified or '', 'data': data}
+    util.write_json(str(_app_cache_file()), raw)
+
+
 class Updater:
     def __init__(self, settings):
         self.settings = settings
@@ -233,55 +291,124 @@ class Updater:
         self.checked_at = 0
         self.installer = None
         self.recovery = ''
+        self.stale = False
 
     def check(self, force=False):
         with self.lock:
             repo = self.settings.get('appUpdateRepo') or ''
             base = {'ok': True, 'enabled': bool(repo), 'current': self.current,
                     'available': False, 'repo': repo}
+            self.stale = False
             if not repo:
                 self.cached = None
                 return self._snapshot(base)
             if not force and self.installer and self.installer.snapshot()['phase'] != 'error':
                 return self._snapshot(dict(self.cached) if self.cached and self.cached.get('repo') == repo else base)
-            if (not force and self.cached and self.cached.get('repo') == repo
-                    and time.time() - self.checked_at < 3600):
+            now = time.time()
+            if (not force and self.cached and self.checked_at and self.cached.get('repo') == repo
+                    and now - self.checked_at < APPUPDATE_CACHE_TTL):
                 return self._snapshot(dict(self.cached))
+            disk = _load_repo_cache(repo)
+            if not force and disk and now - disk['ts'] < APPUPDATE_CACHE_TTL:
+                self.cached = dict(disk['data'])
+                self.checked_at = disk['ts']
+                return self._snapshot(self._fresh_snapshot(base, disk['data']))
             self.cached = None
             try:
                 if not valid_repo(repo):
                     raise UpdateError("GitHub 仓库格式应为 owner/repo")
                 if self.error:
                     raise UpdateError(self.error)
-                release = json.loads(_read('https://api.github.com/repos/' + repo + '/releases/latest', 2 * 1024 * 1024))
-                tag = release['tag_name']
-                latest = tag[1:] if tag.startswith('v') else tag
-                version(latest)
-                if release.get('draft') or release.get('prerelease'):
-                    raise UpdateError("不安装预发布版本")
-                name = f'Arca-{latest}-mac.tar.xz'
-                assets = release.get('assets', [])
-                matching = [a for a in assets if a.get('name') == name]
-                sidecars = [a for a in assets if a.get('name') == name + '.sha256']
-                if len(matching) != 1 or len(sidecars) > 1:
-                    raise UpdateError("缺少唯一的应用更新资产")
-                asset = matching[0]
-                url = asset_url(repo, tag, name)
-                if asset.get('browser_download_url') != url:
-                    raise UpdateError("应用更新地址不匹配")
-                digest = fetch_digest(asset, sidecars[0] if sidecars else None, repo, tag, name)
-                base.update(latest=latest, available=is_newer(latest, self.current),
-                            url=url, digest=digest, highlights=str(release.get('body') or '')[:10000])
-                self.cached = dict(base)
-                self.checked_at = time.time()
-            except Exception as exc:
+                data, etag, last_modified = self._fetch_release(repo, disk)
+                if data is None and disk:          # 304：条件请求命中本地缓存
+                    data = dict(disk['data'])
+                    _save_repo_cache(repo, now, etag, last_modified, data)
+                    self.cached = data
+                    self.checked_at = now
+                    return self._snapshot(self._fresh_snapshot(base, data))
+                data['repo'] = repo
+                _save_repo_cache(repo, now, etag, last_modified, data)
+                self.cached = data
+                self.checked_at = now
+                return self._snapshot(self._fresh_snapshot(base, data))
+            except Exception as exc:  # noqa: BLE001
+                if disk:
+                    # 离线/403/429：只返回明确标记的 stale 数据供展示，禁止安装。
+                    self.cached = dict(disk['data'])
+                    self.checked_at = disk['ts']
+                    self.stale = True
+                    snapshot = self._fresh_snapshot(base, self.cached)
+                    snapshot['error'] = "%s（展示的是 %s 的缓存）" % (
+                        exc, time.strftime('%m-%d %H:%M', time.localtime(disk['ts'])))
+                    return self._snapshot(snapshot)
                 base.update(ok=False, error=str(exc))
             return self._snapshot(base)
+
+    def _fresh_snapshot(self, base, data):
+        merged = dict(base)
+        for key in ('latest', 'available', 'url', 'urls', 'digest', 'highlights',
+                    'released', 'page', 'historyUrl', 'versions', 'securityFixes'):
+            if key in data:
+                merged[key] = data[key]
+        merged['ok'] = True
+        merged['available'] = bool(merged.get('latest')) and is_newer(merged['latest'], self.current)
+        return merged
+
+    def _fetch_release(self, repo, disk):
+        url = 'https://api.github.com/repos/' + repo + '/releases/latest'
+        limit = 2 * 1024 * 1024
+        if disk and (disk.get('etag') or disk.get('last_modified')):
+            response = _open_conditional(url, disk['etag'], disk['last_modified'])
+            if response is None:
+                return None, disk['etag'], disk['last_modified']
+            try:
+                etag = response.headers.get('ETag') or disk['etag']
+                last_modified = response.headers.get('Last-Modified') or disk['last_modified']
+                raw = response.read(limit + 1)
+            finally:
+                response.close()
+            if len(raw) > limit:
+                raise UpdateError("更新响应过大")
+        else:
+            raw = _read(url, limit)
+            etag, last_modified = _LAST_META['etag'], _LAST_META['last_modified']
+        try:
+            release = json.loads(raw)
+        except ValueError as exc:
+            raise UpdateError("更新响应不是有效 JSON") from exc
+        return self._parse_release(repo, release), etag, last_modified
+
+    def _parse_release(self, repo, release):
+        if not isinstance(release, dict):
+            raise UpdateError("更新响应格式异常")
+        tag = str(release.get('tag_name') or '')
+        latest = tag[1:] if tag.startswith('v') else tag
+        version(latest)
+        if release.get('draft') or release.get('prerelease'):
+            raise UpdateError("不安装预发布版本")
+        name = f'Arca-{latest}-mac.tar.xz'
+        assets = release.get('assets', [])
+        if not isinstance(assets, list):
+            raise UpdateError("更新资产格式异常")
+        matching = [a for a in assets if isinstance(a, dict) and a.get('name') == name]
+        sidecars = [a for a in assets if isinstance(a, dict) and a.get('name') == name + '.sha256']
+        if len(matching) != 1 or len(sidecars) > 1:
+            raise UpdateError("缺少唯一的应用更新资产")
+        asset = matching[0]
+        url = asset_url(repo, tag, name)
+        if asset.get('browser_download_url') != url:
+            raise UpdateError("应用更新地址不匹配")
+        digest = fetch_digest(asset, sidecars[0] if sidecars else None, repo, tag, name)
+        return {'ok': True, 'latest': latest, 'available': is_newer(latest, self.current),
+                'url': url, 'digest': digest,
+                'highlights': str(release.get('body') or '')[:10000],
+                'released': str(release.get('published_at') or '')[:10]}
 
     def _snapshot(self, info):
         info['skipped'] = info.get('latest') == self.settings.get('appSkipVersion')
         info['install'] = self.installer.snapshot() if self.installer else None
         info['recovery'] = self.recovery
+        info['stale'] = bool(self.stale)
         return info
 
     def _confirm(self, confirmed_version):
@@ -291,17 +418,26 @@ class Updater:
 
     def apply(self, confirmed_version):
         with self.lock:
-            self._confirm(confirmed_version)
+            repo = self.settings.get('appUpdateRepo')
+            info = self.cached
+            if not info or info.get('repo') != repo or not info.get('available'):
+                raise UpdateError("请先检查应用更新")
             if self.installer:
                 if self.installer.snapshot()['phase'] != 'error':
                     return self.installer.snapshot()
-            info = self.cached
-            if (not info or info.get('repo') != self.settings.get('appUpdateRepo')
-                    or not info.get('available') or time.time() - self.checked_at >= 3600):
+            # 明确新鲜度策略：stale 数据只展示；过期缓存必须重新在线校验
+            # 版本、资产 URL 与 digest 之后才允许安装。
+            if self.stale or time.time() - self.checked_at > APPUPDATE_APPLY_MAX_AGE:
+                fresh = self.check(force=True)
+                if not fresh.get('ok') or fresh.get('stale'):
+                    raise UpdateError("更新信息已过期，请联网后重新检查应用更新")
+            self._confirm(confirmed_version)
+            if (not self.cached or self.cached.get('repo') != repo
+                    or not self.cached.get('available')):
                 raise UpdateError("请先检查应用更新")
             if self.marker.exists():
                 raise UpdateError("上次应用更新尚待确认，请重启应用或检查恢复标记")
-            self.installer = Installer(self, dict(info))
+            self.installer = Installer(self, dict(self.cached))
             self.installer.start()
             return self.installer.snapshot()
 

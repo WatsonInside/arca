@@ -132,13 +132,14 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 发送；之后可随时在「设置 → 更新来源与隐私」中修改或查看发送内容。聚合口径与对外数据
 接口见 [docs/STATS-API.md](docs/STATS-API.md)。
 
-**质量门禁**（`scripts/all_test.py` 一条命令跑完，31 个套件）：
+**质量门禁**（`scripts/all_test.py` 一条命令跑完，32 个套件）：
 
 | 套件 | 覆盖 |
 | --- | --- |
 | integrity 97 / selftest 39 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
 | menu 103 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
-| keyring 53 / appupdate 29 | 钥匙串与触控 ID、应用自更新 |
+| keyring 53 / appupdate 41 | 钥匙串与触控 ID、应用自更新（磁盘缓存/304/stale） |
+| components 15 | 7-Zip 双源与组件更新安全（T14/T15） |
 | stats 21 | 匿名统计客户端状态机与日志聚合口径 |
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
 | partial-extract 35 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |

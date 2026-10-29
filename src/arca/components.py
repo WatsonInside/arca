@@ -138,13 +138,39 @@ def forget(comp_id: str) -> None:
 def _fetch_json(url: str, timeout: int = 25):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(urllib.request.Request(url, headers=UA), timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
+        raw = r.read(MAX_JSON_BYTES + 1)
+    if len(raw) > MAX_JSON_BYTES:
+        raise ComponentError("更新信息响应过大，已中止")
+    return json.loads(raw.decode("utf-8", "replace"))
 
 
 def _run(cmd, cwd=None, timeout=900):
     p = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, timeout=timeout)
     return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+MAX_JSON_BYTES = 5 * 1024 * 1024      # T15：API 响应上限
+MAX_SOURCE_BYTES = 64 * 1024 * 1024   # T15：源码包下载上限
+
+
+def _install_binary(binary: str, target: str) -> None:
+    """临时文件 → fsync → 原子替换；任何一步失败旧文件保持完整。"""
+    directory = os.path.dirname(target) or "."
+    os.makedirs(directory, exist_ok=True)
+    tmp = target + ".new"
+    try:
+        shutil.copyfile(binary, tmp)
+        os.chmod(tmp, 0o755)
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ------------------------------------------------------------------ components
@@ -184,8 +210,8 @@ class SevenZip(Component):
         info.setdefault("id", self.id)
         return info
 
-    def install(self, version: str, engine=None) -> "InstallJob":
-        info = updates.check(engine, force=False)
+    def install(self, version: str, engine=None, force: bool = True) -> "InstallJob":
+        info = updates.check(engine, force=force)
         return InstallJob(self, version, strategy="sevenzip", meta=info, engine=engine)
 
 
@@ -203,7 +229,7 @@ class Zstd(Component):
         return {"version": zst.version_of(path), "path": path or "", "source": source}
 
     def remote(self, force: bool = False) -> dict:
-        return _github_remote(self, "facebook/zstd")
+        return _github_remote(self, "facebook/zstd", force=force)
 
 
 class Par2(Component):
@@ -219,17 +245,23 @@ class Par2(Component):
         return {"version": par2_mod.version_of(path), "path": path or "", "source": source}
 
     def remote(self, force: bool = False) -> dict:
-        return _github_remote(self, "Parchive/par2cmdline")
+        return _github_remote(self, "Parchive/par2cmdline", force=force)
 
 
 REGISTRY = {c.id: c for c in (SevenZip(), Zstd(), Par2())}
 
 
-def _github_remote(comp: Component, repo: str) -> dict:
-    """Version + notes from the GitHub API (api.github.com, not github.com)."""
+def _github_remote(comp: Component, repo: str, force: bool = False) -> dict:
+    """Version + notes from the GitHub API (api.github.com, not github.com).
+
+    T15：force 绕过本地 TTL；draft/prerelease 一律排除；响应带上限；
+    网络失败时返回明确标记的 stale 缓存（只用于展示）。
+    """
     cache_key = f"remote-{comp.id}.json"
     cache = util.read_json(util.state_path(cache_key), {})
-    if isinstance(cache, dict) and cache.get("ts") and time.time() - cache["ts"] < 6 * 3600:
+    fresh = (isinstance(cache, dict) and cache.get("ts")
+             and time.time() - cache["ts"] < 6 * 3600)
+    if fresh and not force:
         return cache["data"]
     try:
         releases = _fetch_json(f"https://api.github.com/repos/{repo}/releases?per_page=8")
@@ -238,14 +270,17 @@ def _github_remote(comp: Component, repo: str) -> dict:
         if cached:
             cached = dict(cached)
             cached["stale"] = True
+            cached["error"] = f"无法连接更新服务器（{exc}），展示的是缓存"
             return cached
-        return {"ok": False, "error": f"无法连接更新服务器（{exc.__class__.__name__}）",
+        return {"ok": False, "error": f"无法连接更新服务器（{exc}）",
                 "component": comp.id}
     if not isinstance(releases, list) or not releases:
         return {"ok": False, "error": "没有读到发布信息", "component": comp.id}
 
     versions = []
     for rel in releases:
+        if not isinstance(rel, dict) or rel.get("draft") or rel.get("prerelease"):
+            continue
         tag = (rel.get("tag_name") or "").lstrip("vV")
         if not re.match(r"^\d+(\.\d+)+$", tag):
             continue
@@ -263,7 +298,7 @@ def _github_remote(comp: Component, repo: str) -> dict:
             "url": rel.get("html_url") or comp.page,
         })
     if not versions:
-        return {"ok": False, "error": "发布信息里没有版本号", "component": comp.id}
+        return {"ok": False, "error": "发布信息里没有稳定版本号", "component": comp.id}
 
     versions.sort(key=lambda v: updates.parse_version(v["version"]), reverse=True)
     latest = versions[0]
@@ -276,7 +311,7 @@ def _github_remote(comp: Component, repo: str) -> dict:
         "highlights": latest["notes"][:5],
         "securityFixes": len([n for v in versions for n in v["notes"] if n["tag"] == "security"]),
         "page": comp.page, "license": comp.license_name,
-        "built": True, "urls": [], "ts": int(time.time()),
+        "built": True, "urls": [], "ts": int(time.time()), "source": "github",
     }
     util.write_json(util.state_path(cache_key), {"ts": time.time(), "data": data})
     return data
@@ -406,10 +441,7 @@ class InstallJob:
 
         self._set(phase="install", percent=0.0, message="正在安装…")
         target = os.path.join(bin_dir(), self.comp.id)
-        if os.path.exists(target):
-            os.replace(target, target + ".old")
-        shutil.copyfile(binary, target)
-        os.chmod(target, 0o755)
+        _install_binary(binary, target)
         _save_records_merge(self.comp.id, {"path": target, "version": got,
                                            "installedAt": time.time()})
         shutil.rmtree(work, ignore_errors=True)
@@ -419,23 +451,34 @@ class InstallJob:
     def _download(self, url: str, dest: str):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         tmp = dest + ".part"
-        with opener.open(urllib.request.Request(url, headers=UA), timeout=180) as r:
-            total = int(r.headers.get("Content-Length") or 0)
-            read = 0
-            with open(tmp, "wb") as fh:
-                while True:
-                    chunk = r.read(1 << 16)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    read += len(chunk)
-                    if total:
-                        self._set(percent=read * 100.0 / total,
-                                  message="正在下载源码… %s/%s"
-                                          % (util.human_size(read), util.human_size(total)))
-        if total and read < total:
-            raise ComponentError("下载不完整")
-        os.replace(tmp, dest)
+        try:
+            with opener.open(urllib.request.Request(url, headers=UA), timeout=180) as r:
+                total = int(r.headers.get("Content-Length") or 0)
+                if total > MAX_SOURCE_BYTES:
+                    raise ComponentError("源码包异常大（%s），已中止" % util.human_size(total))
+                read = 0
+                with open(tmp, "wb") as fh:
+                    while True:
+                        chunk = r.read(1 << 16)
+                        if not chunk:
+                            break
+                        read += len(chunk)
+                        if read > MAX_SOURCE_BYTES:
+                            raise ComponentError("源码包超过大小上限，已中止")
+                        fh.write(chunk)
+                        if total:
+                            self._set(percent=read * 100.0 / total,
+                                      message="正在下载源码… %s/%s"
+                                              % (util.human_size(read), util.human_size(total)))
+            if total and read < total:
+                raise ComponentError("下载不完整")
+            os.replace(tmp, dest)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
     def _compile(self, spec: dict, src: str, work: str) -> str:
         import glob as _glob

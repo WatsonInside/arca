@@ -30,12 +30,19 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import unquote, urlsplit
 import lzma
 
 from . import util
 
 PAGE_URL = "https://www.7-zip.org/download.html"
 HISTORY_URL = "https://www.7-zip.org/history.txt"
+# T14：官网页面是主源，GitHub Releases API 是兜底；只接受可信 HTTPS 主机
+# 与预期资产名，校验值缺失时 fail closed。
+API_LATEST = "https://api.github.com/repos/ip7z/7zip/releases/latest"
+TRUSTED_HOSTS = {"www.7-zip.org", "7-zip.org", "github.com",
+                 "objects.githubusercontent.com",
+                 "release-assets.githubusercontent.com"}
 UA = "Arca/%s (macOS) engine-updater" % util.APP_VERSION
 
 CACHE_TTL = 6 * 3600          # a launch-time check reuses today's answer
@@ -136,34 +143,96 @@ def _get(url: str, timeout: float = 15.0) -> bytes:
         raise UpdateError("连接更新服务器超时") from exc
 
 
-def fetch_latest(timeout: float = 15.0) -> dict:
-    """Read the download page and return the newest macOS build."""
+def _trusted_asset_url(url: str, archive: str) -> bool:
+    """只接受可信 HTTPS 主机上、文件名恰为预期资产的 URL。"""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    if (parts.scheme != "https" or parts.username or parts.password
+            or parts.port not in (None, 443)):
+        return False
+    host = (parts.hostname or "").lower()
+    if host not in TRUSTED_HOSTS:
+        return False
+    return unquote(parts.path.rsplit("/", 1)[-1]) == archive
+
+
+def _fetch_latest_page(timeout: float = 15.0) -> dict:
+    """主源：7-Zip 官网下载页（历史行为保持不变）。"""
     html = _get(PAGE_URL, timeout).decode("utf-8", "replace")
     head = _LATEST_HEAD.search(html)
     if not head:
         raise UpdateError("无法从 7-Zip 官网解析版本号")
     version, released = head.group(1), head.group(2)
+    if not re.fullmatch(r"\d+\.\d+", version):
+        raise UpdateError("7-Zip 官网版本号异常")
 
-    # The macOS archive is 7z<MMNN>-mac.tar.xz.  Current releases are linked
-    # from GitHub, older ones from 7-zip.org/a/ — but the project's own host
-    # also mirrors the newest file, and github.com is unreachable or slow on
-    # many networks.  So try 7-zip.org first and keep the page's link as the
-    # fallback; the downloader walks the list until one host answers.
     mmnn = version.replace(".", "").zfill(4)
-    urls = ["https://www.7-zip.org/a/7z%s-mac.tar.xz" % mmnn]
+    archive = "7z%s-mac.tar.xz" % mmnn
+    urls = []
+    canonical = "https://www.7-zip.org/a/%s" % archive
+    if _trusted_asset_url(canonical, archive):
+        urls.append(canonical)
     for m in re.finditer(r'href="([^"]*?7z(\d{4})-mac\.tar\.xz)"', html):
         if m.group(2) != mmnn:
-            continue        # an older release listed further down the page
+            continue
         url = m.group(1)
         if not url.startswith("http"):
             url = "https://www.7-zip.org/" + url.lstrip("/")
-        if url not in urls:
+        if _trusted_asset_url(url, archive) and url not in urls:
             urls.append(url)
-
-    archive = "7z%s-mac.tar.xz" % mmnn
+    if not urls:
+        raise UpdateError("7-Zip 官网没有可信的 macOS 资产链接")
     return {"version": version, "released": released, "url": urls[0],
             "urls": urls, "archive": archive, "page": PAGE_URL,
-            "history": HISTORY_URL}
+            "history": HISTORY_URL, "source": "page"}
+
+
+def _fetch_latest_github(timeout: float = 15.0) -> dict:
+    """兜底：GitHub Releases API，并做 tag/资产一致性校验。"""
+    try:
+        payload = json.loads(_get(API_LATEST, timeout).decode("utf-8", "replace"))
+    except ValueError as exc:
+        raise UpdateError("Releases API 响应不是有效 JSON") from exc
+    if not isinstance(payload, dict):
+        raise UpdateError("Releases API 响应格式异常")
+    if payload.get("draft") or payload.get("prerelease"):
+        raise UpdateError("Releases API 返回的是预发布版本")
+    tag = str(payload.get("tag_name") or "").lstrip("vV")
+    if not re.fullmatch(r"\d+\.\d+", tag):
+        raise UpdateError("Releases API 版本号无法解析")
+    mmnn = tag.replace(".", "").zfill(4)
+    archive = "7z%s-mac.tar.xz" % mmnn
+    urls = []
+    for asset in payload.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        if os.path.basename(str(asset.get("name") or "")) != archive:
+            continue
+        url = str(asset.get("browser_download_url") or "")
+        if _trusted_asset_url(url, archive) and url not in urls:
+            urls.append(url)
+    if not urls:
+        raise UpdateError("Releases API 缺少预期的 macOS 资产")
+    released = str(payload.get("published_at") or "")[:10]
+    return {"version": tag, "released": released, "url": urls[0], "urls": urls,
+            "archive": archive, "page": PAGE_URL, "history": HISTORY_URL,
+            "source": "github"}
+
+
+def fetch_latest(timeout: float = 15.0) -> dict:
+    """主源失败才回退 Releases API；一致性/可信主机校验两侧都做。"""
+    primary_error = None
+    try:
+        return _fetch_latest_page(timeout)
+    except UpdateError as exc:
+        primary_error = exc
+    try:
+        return _fetch_latest_github(timeout)
+    except UpdateError as exc:
+        raise UpdateError("无法获取 7-Zip 更新信息（官网：%s；Releases API：%s）"
+                          % (primary_error, exc)) from exc
 
 
 def _checksum_urls(urls: list[str]) -> list[str]:
@@ -456,9 +525,16 @@ class Installer:
                 raise UpdateError("下载的引擎版本为 %s，低于预期的 %s" % (got, self.version))
             self._set(phase="install", message="正在启用…")
             final = os.path.join(engines_dir(), "7zz-%s" % got)
-            shutil.copyfile(binary, final + ".new")
-            os.chmod(final + ".new", 0o755)
-            os.replace(final + ".new", final)
+            tmp = final + ".new"
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                pass
+            shutil.copyfile(binary, tmp)
+            os.chmod(tmp, 0o755)
+            with open(tmp, "rb") as fh:
+                os.fsync(fh.fileno())
+            os.replace(tmp, final)
             util.write_json(engine_record_path(), {
                 "version": got, "path": final, "installedAt": time.time(),
                 "source": self.state.get("url") or (self.urls[0] if self.urls else ""),
