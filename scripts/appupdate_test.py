@@ -6,6 +6,8 @@ from pathlib import Path
 import plistlib
 import sys
 import tarfile
+import threading
+import time
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -239,7 +241,9 @@ class Tests(unittest.TestCase):
             self.assertEqual(url, self.url)
             return Response(payload)
         ctx = SimpleNamespace(app_updater=self.updater, token='fixture-token', settings=self.settings,
-                              saved_passwords=SimpleNamespace(summary=lambda: {}))
+                              saved_passwords=SimpleNamespace(summary=lambda: {}),
+                              headless=False, ui_ready=threading.Event(),
+                              ui_ready_lock=threading.Lock(), ui_ready_checks={})
         service = server.Server(ctx)
         service.start()
         try:
@@ -260,6 +264,12 @@ class Tests(unittest.TestCase):
             restarted = server.Server(ctx)
             try:
                 restarted.start()
+                # T05：只有页面真正上报四项自检通过后才清理旧包（异步）。
+                request('ui-ready', {"bridge": True, "dom": True,
+                                     "meta": True, "engine": True})
+                deadline = time.monotonic() + 5
+                while boot.marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
                 self.assertFalse(boot.marker.exists())
             finally:
                 restarted.stop()
@@ -364,6 +374,58 @@ class Tests(unittest.TestCase):
         self.assertFalse(stale.exists(), 'stale backup should be removed')
         self.assertTrue(fresh.exists(), 'fresh backup must survive')
         self.assertTrue(foreign.exists(), 'only our own pattern is touched')
+
+
+class ConfirmUpdateTests(unittest.TestCase):
+    """T05：页面就绪确认的策略（server.confirm_app_update）。"""
+
+    class FakeUpdater:
+        def __init__(self, has_marker):
+            self.marker = SimpleNamespace(exists=lambda: has_marker)
+            self.calls = []
+
+        def startup(self, ready=False):
+            self.calls.append(ready)
+
+    class FakeCtx:
+        def __init__(self, headless=False):
+            self.headless = headless
+            self.ui_ready = threading.Event()
+            self.ui_ready_checks = {}
+
+    def test_headless_never_cleans_up(self):
+        ctx = self.FakeCtx(headless=True)
+        ctx.app_updater = self.FakeUpdater(True)
+        server.confirm_app_update(ctx, timeout=0.05)
+        self.assertEqual(ctx.app_updater.calls, [False])
+
+    def test_timeout_keeps_old_bundle(self):
+        ctx = self.FakeCtx()
+        ctx.app_updater = self.FakeUpdater(True)
+        started = time.monotonic()
+        server.confirm_app_update(ctx, timeout=0.05)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(ctx.app_updater.calls, [False])
+
+    def test_ready_signal_confirms(self):
+        ctx = self.FakeCtx()
+        ctx.app_updater = self.FakeUpdater(True)
+        ctx.ui_ready_checks = {"bridge": True, "dom": True,
+                               "meta": True, "engine": True}
+        ctx.ui_ready.set()
+        server.confirm_app_update(ctx, timeout=0.5)
+        self.assertEqual(ctx.app_updater.calls, [True])
+
+    def test_no_marker_does_nothing(self):
+        ctx = self.FakeCtx()
+        ctx.app_updater = self.FakeUpdater(False)
+        server.confirm_app_update(ctx, timeout=0.05)
+        self.assertEqual(ctx.app_updater.calls, [])
+
+    def test_missing_updater_does_nothing(self):
+        ctx = self.FakeCtx()
+        ctx.app_updater = None
+        server.confirm_app_update(ctx, timeout=0.05)
 
 
 if __name__ == '__main__':

@@ -443,6 +443,33 @@ zipfile 快速路径或 `7zz l -slt` 列出条目，路径不安全的归档直�
   Cmd-Q 人工 E2E 未执行；zstd 的 tar 流取消状态以任务旗标为准，异常文案可能
   是 ReadError 而非“已取消”。
 
+### App 自更新两阶段就绪（T05，2026-10-29）
+
+- 旧逻辑：`Server.start()` 在发现恢复标记后同步向自己的 `/api/settings`
+  发一次 GET，HTTP 200 就当作"新版本启动成功"，随即删除旧包。这只证明
+  HTTP 服务活着，不证明页面/JS/引擎可用；而且发生在窗口创建之前，超时还
+  会拖慢启动。
+- 现在：安装阶段仍写 `appupdate-recovery.json`（schema/路径/dev-ino/版本
+  校验保持不变）。页面 `init()` 完成后由前端主动 POST `/api/ui-ready`，上报
+  四项真实自检：`bridge`（WKWebView 的 `window.webkit.messageHandlers.arca`
+  存在）、`dom`（`#engine-card`/`#c-format`/`#set-updnow` 已渲染）、`meta`
+  （`/api/meta` 成功返回）、`engine`（引擎版本字段非空）。四项全为真才
+  `set()` 事件。
+- 主进程在后台线程里等这个事件（默认 20 s），不阻塞 server/window 创建；
+  超时按"未就绪"处理：保留旧包和恢复标记，并把收到的 checks 打到 stderr。
+  headless 进程没有页面，不会等：直接按未就绪处理，旧包留给下次启动或
+  按恢复标记人工处理。
+- 幂等：重复/迟到的 ui-ready 只覆盖 checks 并 `set()`；确认线程只启动一次；
+  `Updater.startup()` 在标记已删除时直接做一次旧备份清扫并返回，不会重复
+  删除或报错。
+- 已知边界：ui-ready 是页面自报（有 token 保护，但不防本机恶意进程）；"页面
+  存在但 JS 语法错误" 会落到超时分支（保守保留旧包）；超时后标记仍在，下次
+  正常启动会再次等待页面确认；真实 Cmd-Q/窗口创建失败场景未做人工 E2E。
+- 测试：`scripts/appupdate_test.py` 新增 `ConfirmUpdateTests`（headless 不清理、
+  超时保留、就绪确认、无标记不动作、无 updater 不动作），并把
+  `test_http_server_cached_apply_end_to_end` 改为真实 POST ui-ready 后等待
+  异步清理；套件共 34 项通过。
+
 ### 性能基准与可靠性工具（P2，2026-10-26）
 
 - `scripts/benchmark.py`：固定合成语料的 quick/full 两档基准，输出原始 JSON（机器、

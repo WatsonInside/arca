@@ -67,6 +67,12 @@ class AppContext:
         self.window = None
         self.bridge = None
         self.headless = False
+        # T05: the running page reports real readiness (bridge/DOM/meta/engine)
+        # once; the server thread waits for it asynchronously before letting the
+        # updater delete the old bundle.
+        self.ui_ready = threading.Event()
+        self.ui_ready_lock = threading.Lock()
+        self.ui_ready_checks: dict[str, bool] = {}
         # job id -> {path, body}: server-side only (passwords never go back
         # to the frontend), dropped on restart, powers /api/jobs/retry.
         self.requests = {}
@@ -278,6 +284,8 @@ class Handler(BaseHTTPRequestHandler):
         ctx = self.ctx
         self._secrets = [body["password"]] if isinstance(body.get("password"), str) and body["password"] else []
         try:
+            if path == "/api/ui-ready":
+                return self._ui_ready(body)
             if path == "/api/inspect":
                 return self._inspect(body)
             if path == "/api/compress":
@@ -480,6 +488,19 @@ class Handler(BaseHTTPRequestHandler):
                 ctx.engine.refresh_helpers()
         return self._json({"ok": True, "update": info,
                            "components": components.summary(ctx.engine)})
+
+    def _ui_ready(self, body: dict):
+        """页面自检上报（T05）：bridge/DOM/meta/引擎自检全部为真才算就绪。"""
+        ctx = self.ctx
+        names = ("bridge", "dom", "meta", "engine")
+        checks = {name: bool(body.get(name)) for name in names}
+        ready = all(checks.values())
+        with ctx.ui_ready_lock:
+            ctx.ui_ready_checks = checks
+        if ready:
+            ctx.ui_ready.set()
+        return self._json({"ok": True, "ready": ready,
+                           "headless": bool(getattr(ctx, "headless", False))})
 
     def _component_apply(self, body: dict):
         """Start the build/download the user confirmed in the dialog."""
@@ -966,6 +987,27 @@ class _ArcaHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def confirm_app_update(ctx, timeout: float = 20.0) -> None:
+    """确认待处理的 App 更新（T05）。
+
+    由服务线程之外的后台线程调用：页面真正可用（/api/ui-ready 四项自检通过）
+    才让 Updater 删除旧包；超时就保留旧包与恢复标记。headless 进程没有网页，
+    永远不会收到 ui-ready，因此直接按"未就绪"处理，旧包留给下次启动或人工恢复。
+    """
+    updater = getattr(ctx, "app_updater", None)
+    if updater is None or not updater.marker.exists():
+        return
+    if getattr(ctx, "headless", False):
+        updater.startup(ready=False)
+        return
+    ready = ctx.ui_ready.wait(timeout)
+    checks = dict(getattr(ctx, "ui_ready_checks", {}) or {})
+    if not ready:
+        print("[arca] 页面就绪确认超时（%.0fs），保留旧版本与恢复标记: %s"
+              % (timeout, json.dumps(checks, ensure_ascii=False)), file=sys.stderr)
+    updater.startup(ready=ready)
+
+
 class Server:
     def __init__(self, ctx: AppContext):
         cls = type("BoundHandler", (Handler,), {"ctx": ctx})
@@ -979,17 +1021,12 @@ class Server:
 
     def start(self):
         self.thread.start()
-        updater = getattr(self.httpd.RequestHandlerClass.ctx, "app_updater", None)
+        ctx = self.httpd.RequestHandlerClass.ctx
+        updater = getattr(ctx, "app_updater", None)
         if updater is not None and updater.marker.exists():
-            import urllib.request
-            try:
-                request = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/settings", headers={
-                    "X-Arca-Token": self.httpd.RequestHandlerClass.ctx.token})
-                with urllib.request.urlopen(request, timeout=3) as response:
-                    ready = response.status == 200
-                updater.startup(ready=ready)
-            except Exception:
-                updater.startup(ready=False)
+            # 不阻塞窗口/网页创建：确认在后台等页面的 /api/ui-ready。
+            threading.Thread(target=confirm_app_update, args=(ctx,),
+                             daemon=True, name="arca-update-confirm").start()
 
     def stop(self):
         try:

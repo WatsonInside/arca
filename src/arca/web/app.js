@@ -3563,6 +3563,24 @@ async function verifyPassword() {
 }
 
 /* ---------------------------------------------------------------------- init */
+// T05：主进程要等这份"页面真的可用"的报告才清理旧版本。检查项与
+// server.confirm_app_update 的判定一致：JS bridge、关键 DOM、/api/meta、
+// 引擎版本自检。headless 进程没有页面，永远不会发这个请求，旧包会保留。
+function notifyUiReady() {
+  const meta = state.meta || {};
+  const checks = {
+    bridge: NATIVE,
+    dom: !!document.querySelector('#engine-card')
+         && !!document.querySelector('#c-format')
+         && !!document.querySelector('#set-updnow'),
+    meta: !!meta.ok,
+    engine: !!(meta.engine && meta.engine.engineVersion),
+  };
+  if (!TOKEN) return;
+  // 不是关键路径：失败时主进程按超时策略保留旧包并给出恢复标记。
+  api('/ui-ready', checks).catch(() => {});
+}
+
 async function init() {
   try {
     const meta = await api('/meta');
@@ -3642,6 +3660,7 @@ async function init() {
   // An app update sits behind the same quiet check, but only after the engine
   // dialog had its chance to claim the screen.
   setTimeout(maybeCheckAppUpdate, 1600);
+  notifyUiReady();
 }
 
 document.addEventListener('DOMContentLoaded', init);
