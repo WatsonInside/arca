@@ -9,6 +9,8 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+from _paths import build_dir  # noqa: E402
 LOCAL_TMP = os.path.join(ROOT, ".tmp")
 os.makedirs(LOCAL_TMP, exist_ok=True)
 os.environ["TMPDIR"] = LOCAL_TMP
@@ -19,7 +21,7 @@ from arca import util  # noqa: E402
 
 APP = "Arca"
 DIST = os.path.join(ROOT, "dist")
-WORK = os.path.join(ROOT, "build", "pyi")
+WORK = str(build_dir() / "pyi")
 
 
 def _tolerate_removals():
@@ -64,7 +66,7 @@ def run_pyinstaller():
     # runs perfectly well on arm64, so keep it as shipped.
     pyiosx.binary_to_target_arch = lambda *a, **k: None
 
-    os.environ.setdefault("PYINSTALLER_CONFIG_DIR", os.path.join(ROOT, "build", "pyi-cache"))
+    os.environ.setdefault("PYINSTALLER_CONFIG_DIR", str(build_dir() / "pyi-cache"))
     args = [
         os.path.join(ROOT, "src", "main.py"),
         "--name", APP,
@@ -72,7 +74,7 @@ def run_pyinstaller():
         "--noconfirm",
         "--distpath", DIST,
         "--workpath", WORK,
-        "--specpath", os.path.join(ROOT, "build"),
+        "--specpath", str(build_dir()),
         "--icon", os.path.join(ROOT, "assets", "Arca.icns"),
         "--osx-bundle-identifier", util.BUNDLE_ID,
         "--add-data", f"{os.path.join(ROOT, 'src', 'arca', 'web')}:arca/web",

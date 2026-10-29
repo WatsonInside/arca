@@ -25,7 +25,9 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WORK = os.path.join(ROOT, "build", "thirdparty")
+
+from _paths import build_dir  # noqa: E402
+WORK = str(build_dir() / "thirdparty")
 VENDOR = os.path.join(ROOT, "vendor")
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

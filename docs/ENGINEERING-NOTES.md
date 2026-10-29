@@ -413,7 +413,7 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
 旧的后端 `POST /api/jobs/retry` 仍保留（供既有客户端/套件显式调用），但 UI
 不再走它；两者都不会在无人确认时自动重放。回归 `scripts/retry_plan_test.py`
 （8 项：白名单、journal v2、恢复 retryable、v1 不重试、缺失源/条目契约），已
-接入 `scripts/all_test.py`（32 套件）。
+接入 `scripts/all_test.py`（33 套件）。
 
 ### 压缩草稿生命周期与竞态防护（2026-10-27）
 
@@ -476,7 +476,7 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件、T10 起 31 套件、R5b 起 32 套件，含 `shutdown`、`overwrite-txn`、`single-instance`、`retry-plan` 与 `components`）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件、T10 起 31 套件、R5b 起 32 套件、R6 起 33 套件，含 `shutdown`、`overwrite-txn`、`single-instance`、`retry-plan`、`components` 与 `release-check`）。
 
 ### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
 
@@ -547,6 +547,40 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   端到端；`zstd`/`par2` 的“源码编译安装”未在本轮真实编译验证（沿用既有 recipe）；
   自定义 repo（非 owner/repo）仍是信任输入，不做额外签名校验（设计如此：自更新资产
   校验 SHA256，但信任来源是配置的 GitHub 仓库）。
+
+### 构建目录、CI 骨架与发布预检（R6：T07b/T08/T09，2026-10-29）
+
+- **构建目录统一（T07b）**：新增 `scripts/_paths.py`，`ARCA_BUILD_DIR` 是唯一覆盖点；
+  Makefile 用 `ARCA_BUILD_DIR ?= $(CURDIR)/build` 并 export，`scripts/all_test.py`、
+  `package.py`、`bundle.py`、`build_app.py`、`build_thirdparty.py`、`benchmark*.py`
+  都从同一处解析。仓库里 tracked 的 `build/` 符号链接保持不动。
+  验证：`ARCA_BUILD_DIR=$PWD/build-clean make setup` 后，`all_test.py --only components`
+  （纯 Python）与 `--only menu`（headless）的产物全部落在 `build-clean/`：日志、
+  summary JSON、`Arca-test.app`、headless HOME（profile）与 port-file 快照；
+  port-file 只在运行期存在，套件结束后复制一份到构建目录留证。
+- **package/publish import 副作用（T09 前置）**：`scripts/package.py` 不再在 import 时
+  创建 `.tmp` 或修改 TMPDIR，改为 `_prepare_tmp()` 在 `main()` 内调用；
+  `release_check` 用子进程验证 import 不产生任何构建目录内容。
+- **release-check（T09）**：`scripts/release_check.py` 只读检查：应用与资产版本一致、
+  四个发布资产存在、tar.xz 的 sha256 sidecar 匹配、tar 成员无绝对路径 / `..` /
+  设备文件、符号链接不逃逸、顶层唯一 `Arca.app`、二进制可执行、
+  `codesign --verify --deep --strict` 状态（未签名时为 WARN，签名完成后可加
+  `--require-signed` 变 FAIL）、测试 provenance（必须是 all-test summary JSON：
+  HEAD 与当前一致、工作树 clean、全部套件 PASS、日志文件存在）、import 副作用、
+  安装器文案不再有“不会联网”绝对表述。provenance 不认“只看 final-test.log 文件名”的证据。
+- **CI 骨架（T08）**：`.github/workflows/ci.yml` 默认 `workflow_dispatch`，PR 快速门禁
+  可选；nightly 未启用（需用户确认后才加 `schedule`）。workflow 使用
+  `ARCA_BUILD_DIR=${{ github.workspace }}/build-ci`，quick 跑 `make test-fast` + 纯 Python
+  套件，full 跑 `make test`；日志作为 artifact（不含 secrets / 用户数据）。
+  `scripts/ci_check.py` 用 ruby 离线解析 YAML，检查触发方式、权限、ARCA_BUILD_DIR、
+  无 secrets 引用、job 的 runs-on/timeout、nightly 未预启用，并检查本机
+  python/node/Chrome/7zz/runtime。**CI 远端从未运行，状态为“未验证”**；
+  本地只验证了工作流结构与命令可执行。
+- 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
+  import 副作用/文案），默认套件 32→33。
+- 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长
+  未验证；`make setup` 需要网络（pyobjc）；release-check 的签名/公证项在拿到证书前
+  只能是 WARN。
 
 ### 性能基准与可靠性工具（P2，2026-10-26）
 

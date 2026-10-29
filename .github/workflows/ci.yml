@@ -1,0 +1,85 @@
+# Arca macOS CI 骨架（v3 T08）
+#
+# 状态：本地只做 YAML/结构校验（scripts/ci_check.py），未在 GitHub 远端运行过，
+# 因此文档与提交里必须写“未验证”。默认手动触发（workflow_dispatch）；PR 快速
+# 门禁为可选项；nightly 需要用户明确确认后才加 schedule，这里不预先启用。
+name: ci
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: quick（默认）或 full（需要 Chrome 与更长时间）
+        required: false
+        default: quick
+        type: choice
+        options: [quick, full]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: arca-ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # T07b：干净构建目录；CI 检出里的 tracked build/ 符号链接指向本机卷，不可用。
+  ARCA_BUILD_DIR: ${{ github.workspace }}/build-ci
+jobs:
+  quick:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'quick'
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 准备构建目录与 runtime
+        run: |
+          make setup
+          make thirdparty
+          make bundle
+      - name: 语法与快速门禁
+        run: make test-fast
+      - name: 纯 Python 套件
+        run: build-ci/venv/bin/python -S -E -B scripts/all_test.py --only components,checksum,zip-inspect
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arca-quick-logs
+          path: build-ci/*.log
+          if-no-files-found: warn
+          retention-days: 7
+  full:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'full'
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 检查 Chrome（UI/headless 套件需要）
+        run: |
+          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      - name: 准备构建目录与 runtime
+        run: |
+          make setup
+          make thirdparty
+          make bundle
+      - name: 全量门禁
+        run: make test
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arca-full-logs
+          path: build-ci/*.log
+          if-no-files-found: warn
+          retention-days: 7

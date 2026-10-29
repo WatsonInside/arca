@@ -34,6 +34,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from _paths import build_dir  # noqa: E402
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -216,7 +218,7 @@ def main():
     parser.add_argument("--keep", action="store_true", help="keep generated corpus")
     args = parser.parse_args()
     cfg = CASES[args.mode]
-    build = ROOT / "build"
+    build = build_dir()
     build.mkdir(exist_ok=True)
     # Rough need: big file + archive + extracted copy + tree + fixtures.
     needed = (cfg["big_mib"] * 3 + 32) * MIB

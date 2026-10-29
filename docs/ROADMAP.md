@@ -123,7 +123,7 @@
 ## C. 工程项（支撑 A/B 落地）
 
 ### C1. CI 化
-- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 32 套件的
+- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 33 套件的
   一条命令全量门禁（含 headless 实例编排与隔离 HOME）；`make verify` / `make test-fast`
   提供快速预检。仍无远端 CI——本仓库没有 CI 运行记录，`make test` 是唯一完整可信信号。
 - 两轮执行都靠人工贴命令 + 对方手工跑门禁。把 `node --check` /
@@ -174,6 +174,7 @@
 | R2 取消/退出语义（T00 契约 / T01 子进程注册与有界收尾） | ✅ 2026-10-29 已完成（T00 待用户/复核确认） | 新增 `shutdown` 套件 10 项；`interrupt-recovery` 增 SIGTERM 场景至 5 项；`make test` 27/27；缺口：真实 Cmd-Q 人工验收、引擎静默子进程为模拟、未做真实断电 |
 | R5a 预填重开与单实例锁（T10+T12-lite） | ✅ 完成（2026-10-29） | `make test` 31 套全绿；journal schema v2 安全参数 + `retry-requests` 预填重开（源/条目缺失报错或警告、密码不回读、不自动排队）；`single-instance` 5 项（同 HOME 第二实例退出 3，`ARCA_HOME` 可隔离）；缺口：不做请求转交；真实 GUI NSAlert 提示为人工项 |
 | R5b 更新链路加固（T13 磁盘缓存/条件请求、T14 7-Zip 双源、T15 组件更新安全） | ✅ 2026-10-29 已完成并回归 | `make test` 32 套全绿；`appupdate` 41 项（磁盘缓存/304/repo 隔离/stale 禁止安装）、新增 `components` 15 项；官网为主源 + GitHub Releases 兜底、可信域与资产名校验、draft/prerelease 排除、JSON/源码包上限、临时文件+fsync+原子替换；缺口：真实断网/限流与 zstd/par2 真实编译安装未做端到端 |
+| R6 构建/CI/发布预检（T07b 构建目录、T08 CI 骨架、T09 release-check） | ✅ 2026-10-29 已完成并回归（CI 远端未验证） | `make test` 33 套全绿；`ARCA_BUILD_DIR` 统一覆盖（Makefile/脚本），空构建目录跑通 components + menu；新增 `release-check` 10 项（资产/摘要/tar 安全/签名状态/provenance/import 副作用/文案）；CI skeleton `workflow_dispatch` + 可选 PR，nightly 未启用，远端未运行（未验证） |
 | R4 覆盖压缩的可恢复替换（T06） | ✅ 2026-10-29 已完成并回归 | `make test` 29 套全绿；新增 `overwrite-txn` 11 项；覆盖写改为 staging + 同卷 rename，切换前 `7zz t`/`zstd -t` 回读校验，manifest 崩溃前滚，PAR2 best-effort；缺口：非单次原子、跨卷不支持、断电/外部改动未实测 |
 | R3a 写入边界与元数据硬上限（T04c/T04a） | ✅ 2026-10-29 已完成并回归 | `make test` 28 套全绿；新增 `extract-safety` 10 项；zipfix/zst 跳过不安全条目并计数，7zz/RAR 解压前用 `7zz l -slt` 预检并拒绝危险路径/符号链接归档；缺口：真实 RAR 链接未实测、TOCTOU、预检按整包拒绝 |
 | R3b App 自更新两阶段就绪（T05） | ✅ 2026-10-29 已完成并回归 | 页面 `init()` 后上报 `/api/ui-ready`（bridge/DOM/meta/引擎四项），后台线程等待（20 s）后才删旧包，超时/headless 保留旧包与恢复标记；`appupdate` 套件 34 项（新增 ConfirmUpdateTests）；缺口：真实 Cmd-Q/窗口创建失败人工 E2E、ui-ready 为页面自报 |

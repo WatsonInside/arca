@@ -1,7 +1,9 @@
 # Arca — 常用命令入口
 # 完整说明见 AGENTS.md；实现细节见 docs/ENGINEERING-NOTES.md
 
-PY := build/venv/bin/python -S -E
+ARCA_BUILD_DIR ?= $(CURDIR)/build
+export ARCA_BUILD_DIR
+PY := $(ARCA_BUILD_DIR)/venv/bin/python -S -E
 
 .PHONY: setup thirdparty bundle package publish test test-fast verify audit shots brief stats
 
@@ -20,14 +22,14 @@ brief:
 	@$(PY) scripts/design_audit.py | tail -1
 
 setup:
-	python3 -m venv build/venv
-	build/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
+	python3 -m venv $(ARCA_BUILD_DIR)/venv
+	$(ARCA_BUILD_DIR)/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
 
 thirdparty:
 	$(PY) scripts/build_thirdparty.py
 
 bundle:
-	ARCA_PYTHON=$$PWD/build/python-runtime ARCA_OUT=$$PWD/release/Arca.app $(PY) scripts/bundle.py
+	ARCA_PYTHON=$(ARCA_BUILD_DIR)/python-runtime ARCA_OUT=$$PWD/release/Arca.app $(PY) scripts/bundle.py
 
 package:
 	$(PY) scripts/package.py
@@ -64,6 +66,6 @@ shots:
 	$(PY) scripts/shots.py
 
 # 匿名使用统计：拉 COS 访问日志 → 聚合 → 上传 stats.json 数据接口
-# （接口契约见 docs/STATS-API.md；凭据在 build/cos.json，--sample 可离线验证）
+# （接口契约见 docs/STATS-API.md；凭据在 $(ARCA_BUILD_DIR)/cos.json，--sample 可离线验证）
 stats:
 	$(PY) scripts/stats.py

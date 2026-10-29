@@ -26,6 +26,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from _paths import build_dir  # noqa: E402
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -100,7 +102,7 @@ class _NullRunner:
 
 
 def main():
-    build = ROOT / "build"
+    build = build_dir()
     profile_baseline = {p.name for p in build.glob("chrome-bench-*")}
     work = Path(tempfile.mkdtemp(prefix="bench-ui-", dir=build))
     archive = work / "entries-1000.zip"

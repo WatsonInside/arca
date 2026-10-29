@@ -22,7 +22,9 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = Path(os.environ.get("ARCA_BUILD_DIR") or (ROOT / "build"))
+from _paths import ROOT as _ROOT, build_dir  # noqa: E402
+
+BUILD = build_dir()
 PY = [str(BUILD / "venv/bin/python"), "-S", "-E", "-B"]
 
 # kind:
@@ -49,6 +51,7 @@ SUITES = [
     {"name": "progress", "kind": "passed_failed", "script": "progress_test", "deps": ["engine"], "min": 6},
     {"name": "appupdate", "kind": "unittest", "script": "appupdate_test", "deps": ["fixture"], "min": 41},
     {"name": "components", "kind": "unittest", "script": "components_test", "deps": [], "min": 15},
+    {"name": "release-check", "kind": "unittest", "script": "release_check_test", "deps": [], "min": 10},
     {"name": "zip-password", "kind": "unittest", "script": "zip_password_test", "deps": ["engine"], "min": 6},
     {"name": "stats", "kind": "passed_failed", "script": "stats_test", "deps": [], "min": 18},
     {"name": "jobwait", "kind": "unittest", "script": "jobwait_test", "deps": [], "min": 5},
@@ -343,6 +346,9 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
                 proc.wait(timeout=10)
             output.seek(0)
             runner.log("headless", output.read() + f"HEADLESS STOPPED: {proc.returncode}\n")
+            if port.exists():
+                # T07b：保留 port-file 证据（内容含 token，仅测试实例、结束后即弃）。
+                shutil.copyfile(port, BUILD / f"{runner.prefix}-port.json")
             port.unlink(missing_ok=True)
 
 
@@ -403,7 +409,8 @@ def main():
     prefix = f"all-test-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     stamp = prefix[len("all-test-"):]
     summary_path = BUILD / f"all-test-summary-{stamp}.json"
-    with tempfile.TemporaryDirectory(prefix="arca-all-test-home-") as home:
+    with tempfile.TemporaryDirectory(prefix="arca-all-test-home-", dir=BUILD) as home:
+        print(f"[env] HOME={home} ARCA_BUILD_DIR={BUILD}", flush=True)
         env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE="1")
         runner = Runner(env, prefix)
         for suite in selected:

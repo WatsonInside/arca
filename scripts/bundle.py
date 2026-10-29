@@ -17,6 +17,8 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+from _paths import build_dir  # noqa: E402
 LOCAL_TMP = os.path.join(ROOT, ".tmp")
 os.makedirs(LOCAL_TMP, exist_ok=True)
 os.environ["TMPDIR"] = LOCAL_TMP
@@ -33,7 +35,7 @@ PY_SRC = os.environ.get("ARCA_PYTHON") or "/Users/watsoninside/.workbuddy/binari
 
 def _site_packages() -> str:
     for cand in (os.environ.get("ARCA_SITE"),
-                 os.path.join(ROOT, "build", "venv", "lib", "python3.13", "site-packages"),
+                 str(build_dir() / "venv" / "lib" / "python3.13" / "site-packages"),
                  os.path.join(PY_SRC, "lib", "python3.13", "site-packages")):
         if cand and os.path.isdir(os.path.join(cand, "objc")):
             return cand

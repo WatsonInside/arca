@@ -29,7 +29,9 @@ Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Pyth
 ## 常用命令（等价 Makefile）
 
 ```bash
-make test          # 全量门禁（32 套件，~3 分钟，发布前必须过）
+make test          # 全量门禁（33 套件，~3 分钟，发布前必须过）
+ARCA_BUILD_DIR=/tmp/arca-build make test   # 构建/测试产物换目录（默认 build/ 符号链接不动）
+build/venv/bin/python -S -E -B scripts/release_check.py   # 只读发布预检（资产/摘要/provenance）
 make test-fast     # node --check + design_audit + selftest + progress（快速反馈）
 make audit         # 设计规则确定性检查（0 = 干净）
 make bundle        # 组装 release/Arca.app
@@ -71,6 +73,7 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 | progress 8 | 7-Zip 进度解析（退格符回归锁） |
 | keyring 53 / appupdate 41 | 钥匙串、应用自更新（磁盘缓存/304/stale） |
 | components 15 | 7-Zip 双源与组件更新安全（T14/T15） |
+| release-check 10 | 只读发布预检（资产/摘要/tar 安全/签名状态/测试 provenance） |
 | update 25 / update-long 27 | 引擎更新全流程（long 含真实下载） |
 | compress-scan / compress-space / zip-* / inspect-* / extract-list / concurrency | 各子域 |
 | jobwait / menu-cleanup | 任务等待时序、menu 收尾策略（mock） |

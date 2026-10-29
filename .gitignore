@@ -16,3 +16,6 @@ gh-device.json
 # Python bytecode
 __pycache__/
 *.pyc
+
+# 干净构建目录演示（T07b）
+build-clean/

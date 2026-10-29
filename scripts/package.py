@@ -10,19 +10,24 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOCAL_TMP = os.path.join(ROOT, ".tmp")
-os.makedirs(LOCAL_TMP, exist_ok=True)
-os.environ["TMPDIR"] = LOCAL_TMP
-tempfile.tempdir = LOCAL_TMP
-
 sys.path.insert(0, os.path.join(ROOT, "src"))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from _paths import build_dir  # noqa: E402
 from arca import util  # noqa: E402
 
 APP = "Arca"
 DIST = os.path.join(ROOT, "dist")
 APP_PATH = os.environ.get("ARCA_APP") or os.path.join(ROOT, "release", f"{APP}.app")
-BUILD = os.path.join(ROOT, "build")
+BUILD = str(build_dir())
 VERSION = util.APP_VERSION
+
+
+def _prepare_tmp() -> None:
+    """把临时目录收进构建目录（只在真正打包时调用，避免 import 副作用）。"""
+    local_tmp = os.path.join(BUILD, ".tmp")
+    os.makedirs(local_tmp, exist_ok=True)
+    os.environ["TMPDIR"] = local_tmp
+    tempfile.tempdir = local_tmp
 
 
 def sh(args, **kw):
@@ -249,7 +254,7 @@ def make_pkg():
 <body style="font-family:-apple-system;font-size:13px;color:#222">
 <h2 style="margin:0 0 6px">安装 {APP} {VERSION}</h2>
 <p>{APP} 是一个本地运行的压缩 / 解压工具：ZIP、7Z、RAR 解压，AES-256 加密，可分卷。</p>
-<p style="color:#666">安装位置：/Applications。所有文件处理都在本机完成，不会联网。</p>
+<p style="color:#666">安装位置：/Applications。除你主动触发的应用/引擎更新检查外，文件处理都在本机完成，不会把文件内容发送到任何服务器。</p>
 </body>""")
     write_installer_html(os.path.join(res, "conclusion.html"), f"""
 <body style="font-family:-apple-system;font-size:13px;color:#222">
@@ -322,6 +327,7 @@ def check_world_readable():
 
 
 def main():
+    _prepare_tmp()
     if not os.path.isdir(APP_PATH):
         raise SystemExit("run scripts/build_app.py first")
     check_world_readable()
