@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unicodedata
 
 APP_NAME = "Arca"
@@ -142,14 +143,56 @@ def read_json(path: str, default):
         return default
 
 
-def write_json(path: str, data) -> None:
-    tmp = path + ".tmp"
+def _fsync_directory(directory: str) -> None:
+    """Best-effort fsync of a directory so a rename survives a crash."""
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-    except Exception:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
         pass
+    finally:
+        os.close(fd)
+
+
+def write_json(path: str, data, *, strict: bool = False) -> bool:
+    """Atomically write *data* as UTF-8 JSON.
+
+    The temporary file is created in the destination directory with a unique
+    name, flushed and fsynced, then renamed over the destination.  A failure
+    leaves the previous file untouched and returns False; callers that need a
+    hard error pass ``strict=True``.  Best-effort state writers (task journal,
+    history) keep the app running on False, but the degradation is logged to
+    stderr instead of being swallowed silently.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+        tmp = None
+        _fsync_directory(directory)
+        return True
+    except Exception as exc:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        if strict:
+            raise
+        print(f"[arca] 状态写入失败（保留旧文件）: {path}: {exc}", file=sys.stderr)
+        return False
 
 
 def sanitize_name(name: str) -> str:

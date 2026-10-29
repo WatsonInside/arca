@@ -34,6 +34,7 @@ tempfile.tempdir = _LOCAL_TMP
 
 from arca import engine as eng           # noqa: E402
 from arca import server as srv           # noqa: E402
+from arca import util as util_mod        # noqa: E402
 from arca.settings import Settings        # noqa: E402
 
 PASS, FAIL, SKIP = [], [], []
@@ -119,6 +120,80 @@ def main():
     src, payloads = build_samples(tmp)
     out_dir = os.path.join(tmp, "out")
     os.makedirs(out_dir, exist_ok=True)
+
+    # ------------------------------------------------- [0] util.write_json 原子写
+    print("[0] util.write_json 原子写")
+    atomic_dir = os.path.join(tmp, "atomic")
+    os.makedirs(atomic_dir, exist_ok=True)
+    atomic_path = os.path.join(atomic_dir, "state.json")
+
+    def atomic_tmp_files():
+        return [name for name in os.listdir(atomic_dir) if ".tmp" in name]
+
+    check("首次写入返回 True", util_mod.write_json(atomic_path, {"n": 1}) is True)
+    check("写入内容可读回", util_mod.read_json(atomic_path, None) == {"n": 1})
+    check("成功写入后无临时文件残留", atomic_tmp_files() == [])
+    before = open(atomic_path, "rb").read()
+    check("不可序列化数据返回 False",
+          util_mod.write_json(atomic_path, {"bad": object()}) is False)
+    check("失败后旧文件原样保留", open(atomic_path, "rb").read() == before)
+    check("失败后无临时文件残留", atomic_tmp_files() == [])
+    try:
+        util_mod.write_json(atomic_path, {"bad": object()}, strict=True)
+        raised = False
+    except TypeError:
+        raised = True
+    check("strict=True 抛错", raised)
+    missing_dir = os.path.join(atomic_dir, "missing")
+    check("目标目录不存在时返回 False",
+          util_mod.write_json(os.path.join(missing_dir, "state.json"), {"a": 1}) is False)
+    check("目标目录不存在时不会创建目录", not os.path.isdir(missing_dir))
+
+    import threading
+    concurrent_results = []
+
+    def atomic_writer(index):
+        concurrent_results.append(
+            util_mod.write_json(atomic_path, {"writer": index, "pad": "x" * 2000}))
+
+    writers = [threading.Thread(target=atomic_writer, args=(index,)) for index in range(2)]
+    for writer in writers:
+        writer.start()
+    for writer in writers:
+        writer.join()
+    final = util_mod.read_json(atomic_path, None)
+    check("并发写均返回 True", concurrent_results == [True, True])
+    check("并发写后 JSON 完整有效",
+          isinstance(final, dict) and final.get("writer") in (0, 1)
+          and len(final.get("pad", "")) == 2000)
+    check("并发写后无临时文件残留", atomic_tmp_files() == [])
+    check("写入文件权限为 0600", (os.stat(atomic_path).st_mode & 0o777) == 0o600)
+    stable = open(atomic_path, "rb").read()
+    from unittest import mock
+    with mock.patch.object(util_mod.os, "replace", side_effect=OSError("replace boom")):
+        replaced = util_mod.write_json(atomic_path, {"n": 2})
+    check("replace 失败返回 False", replaced is False)
+    check("replace 失败后旧文件完整", open(atomic_path, "rb").read() == stable)
+    check("replace 失败后无临时文件残留", atomic_tmp_files() == [])
+
+    import contextlib
+    import io
+    warning = io.StringIO()
+    with contextlib.redirect_stderr(warning):
+        degraded = util_mod.write_json(atomic_path, {"bad": object()})
+    check("journal 类降级会写 stderr 告警",
+          degraded is False and "状态写入失败" in warning.getvalue())
+
+    readonly_dir = os.path.join(atomic_dir, "readonly")
+    os.makedirs(readonly_dir, exist_ok=True)
+    os.chmod(readonly_dir, 0o500)
+    try:
+        readonly_ok = util_mod.write_json(os.path.join(readonly_dir, "state.json"), {"a": 1})
+    finally:
+        os.chmod(readonly_dir, 0o700)
+    check("只读目录写入返回 False", readonly_ok is False)
+    check("只读目录未产生临时文件",
+          [name for name in os.listdir(readonly_dir) if ".tmp" in name] == [])
 
     settings = Settings()
     engine = eng.Engine()

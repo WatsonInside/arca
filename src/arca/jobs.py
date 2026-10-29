@@ -20,7 +20,7 @@ class Job:
                  "item", "speed", "eta", "total", "done", "outputs", "error",
                  "created", "started", "finished", "cancel", "result", "log",
                  "srcPath", "destPath", "format", "sizeText", "inputs", "bucket",
-                 "planned", "_lock", "_task", "_secrets")
+                 "planned", "mode", "_lock", "_task", "_secrets")
 
     def __init__(self, kind: str, title: str, **extra):
         self.id = uuid.uuid4().hex[:12]
@@ -51,6 +51,9 @@ class Job:
         # Kept in the crash journal so an interrupted run can name its output
         # without guessing from the (possibly missing) final outputs.
         self.planned = extra.get("planned", "")
+        # fresh vs merge is decided by the running extract task; the UI reads it
+        # to word cancel/retry hints with the real cleanup contract.
+        self.mode = extra.get("mode", "")
         self.sizeText = ""
         # Kept so a finished compression can be repeated from its context menu
         # without the user re-picking every file.
@@ -72,6 +75,7 @@ class Job:
                 "destPath": self.destPath, "format": self.format,
                 "sizeText": self.sizeText, "result": self.result,
                 "inputs": list(self.inputs),
+                "mode": self.mode,
             }, self._secrets)
 
     def update(self, **kw):
@@ -564,6 +568,7 @@ def make_extract_task(mgr: JobManager, opts: dict):
         dest = opts["dest"]
         entries = opts.get("entries") or None
         fresh = not os.path.isdir(dest)          # did we create this folder?
+        job.update(mode="fresh" if fresh else "merge")
         # Record ownership semantics before any write: after a crash the next
         # launch can say whether existing files were supposed to be preserved.
         mgr.journal_update(job, mode="fresh" if fresh else "merge")

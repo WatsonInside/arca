@@ -76,7 +76,7 @@ class Settings:
         version(value)
         with self._lock:
             self._data["appSkipVersion"] = value
-            util.write_json(self._path, self._data)
+            util.write_json(self._path, self._data, strict=True)
 
     def patch(self, values: dict) -> dict:
         from .appupdate import valid_repo
@@ -87,5 +87,5 @@ class Settings:
                 if k in ALLOWED and (k != "passwordAuth" or v in ("off", "touchid")):
                     self._data[k] = v
             data = dict(self._data)
-            util.write_json(self._path, data)
+            util.write_json(self._path, data, strict=True)
         return data

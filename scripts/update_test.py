@@ -290,10 +290,12 @@ def main():
             time.sleep(0.4)
 
         # ------------------------------------------------------- 4. skip a version
-        ui.js("document.querySelector('#btn-settings').click()")
+        # A real mouse press focuses the button before opening; do the same so
+        # the focus-restore assertions exercise the real opener.
+        ui.js("(() => { const b = document.querySelector('#btn-settings'); b.focus(); b.click(); return true; })()")
         time.sleep(0.5)
         SETTINGS = "!!document.querySelector('.sheet[aria-label=\"设置\"]')"
-        ui.click_sel("#set-updnow")
+        ui.js("(() => { const b = document.querySelector('#set-updnow'); b.focus(); b.click(); return true; })()")
         check("设置里「检查更新…」也能打开", ui.wait_dialog(20))
         check("检查更新不会关掉设置页", ui.js(SETTINGS))
         check("更新对话框叠在设置页之上", ui.js("""(() => {
@@ -303,11 +305,40 @@ def main():
             && top.querySelector('.sheet').getAttribute('aria-label') === '引擎更新'
             && sheets[0].querySelector('.sheet').getAttribute('aria-label') === '设置';
         })()"""))
+        # T11: only the top layer may be exposed as a modal dialog; the sheet
+        # underneath is inert + aria-hidden so the screen reader stays on top.
+        check("叠层只暴露最上层 aria-modal，下层 inert/aria-hidden", ui.js("""(() => {
+          const sheets = [...document.querySelectorAll('.sheet-back')];
+          const top = sheets[sheets.length - 1];
+          const lower = sheets[0];
+          const modals = [...document.querySelectorAll('[aria-modal="true"]')];
+          return modals.length === 1 && top.contains(modals[0])
+            && lower.getAttribute('aria-hidden') === 'true' && lower.inert === true
+            && document.querySelector('.shell').inert === true;
+        })()"""))
+        for _ in range(10):
+            ui.key("Tab", "Tab", 9)
+            time.sleep(0.03)
+        check("Tab 焦点不逃出最上层 sheet", ui.js("""(() => {
+          const sheet = document.querySelector('.sheet.upd');
+          return !!(sheet && sheet.contains(document.activeElement));
+        })()"""))
         ui.key("Escape", "Escape", 27)
         time.sleep(0.7)
         check("Esc 只关闭最上层的更新对话框", not ui.js("!!document.querySelector('.sheet.upd')"))
         check("Esc 之后设置页仍然打开", ui.js(SETTINGS))
-        ui.click_sel("#set-updnow")
+        check("关闭叠层后下层恢复 aria-modal/inert", ui.js("""(() => {
+          const sheet = document.querySelector('.sheet[aria-label="设置"]')
+            ?.closest('.sheet-back');
+          const modals = [...document.querySelectorAll('[aria-modal="true"]')];
+          return !!sheet && sheet.inert === false && !sheet.hasAttribute('aria-hidden')
+            && modals.length === 1 && sheet.contains(modals[0]);
+        })()"""))
+        check("Esc 关闭更新对话框后焦点回到设置页内", ui.js("""(() => {
+          const sheet = document.querySelector('.sheet[aria-label="设置"]');
+          return !!(sheet && sheet.contains(document.activeElement));
+        })()"""))
+        ui.js("(() => { const b = document.querySelector('#set-updnow'); b.focus(); b.click(); return true; })()")
         check("设置页内可再次打开更新对话框", ui.wait_dialog(20))
         check("再次打开后设置页仍在其下", ui.js(SETTINGS))
         if ui.js("!!document.querySelector('.sheet.upd')"):
@@ -318,6 +349,12 @@ def main():
                   str(cfg.get("engineSkipVersion")))
             check("跳过会关闭对话框", not ui.js("!!document.querySelector('.sheet.upd')"))
             check("跳过不关闭设置页", ui.js(SETTINGS))
+            ui.key("Escape", "Escape", 27)
+            time.sleep(0.7)
+            check("Esc 关闭设置页后 shell 恢复可交互",
+                  ui.js("!document.querySelector('.shell').inert"))
+            check("关闭设置页后焦点回到设置按钮",
+                  ui.js("document.activeElement && document.activeElement.id === 'btn-settings'"))
 
             ws.call("Page.reload")
             time.sleep(2.4)

@@ -9,6 +9,8 @@ Covered regressions:
   * accepted /api/compress clears the submitted draft (no old "待压缩" rows);
   * failed submit keeps the current draft and explicit choices;
   * cancel -> cancelled, cancel card collapses, recent list includes it;
+  * cancelled task can be retried from the queue: exactly one follow-up job,
+    original request payload reused, target-change hint shown;
   * after cancelling A, dropping B never mixes A inputs or A directory;
   * add/remove inputs recompute automatic name and destination;
   * an explicit destination survives edits and receives the product;
@@ -114,6 +116,7 @@ window.__jobCard = (id) => {
     className: card.className,
     barHidden: bar.classList.contains('hidden'),
     cancel: !!card.querySelector(`[data-cancel="${id}"]`),
+    retry: !!card.querySelector(`[data-retry="${id}"]`),
     remove: !!card.querySelector(`[data-remove="${id}"]`),
     actions: card.querySelector('.job-actions').textContent,
   };
@@ -129,11 +132,16 @@ window.__queueIds = () => [...document.querySelectorAll('#q-list [data-job]')]
 def check(name, condition, detail=""):
     print(("  ok    " if condition else "  FAIL  ") + name
           + (f"   [{detail}]" if detail else ""), flush=True)
-    if not condition:
+    if condition:
+        check.ok += 1
+    else:
         check.failed = True
+        check.fail += 1
 
 
 check.failed = False
+check.ok = 0
+check.fail = 0
 
 
 class Harness:
@@ -370,6 +378,49 @@ def run(port_file):
         h.wait_js(f"window.__recentIds().includes({json.dumps(job_a)})")
         check("侧栏最近任务包含取消任务",
               job_a in (h.js("window.__recentIds()") or []))
+
+        # ---------------------- 2b. cancelled task: retry reuses its request
+        h.wait_js(f"!!document.querySelector('[data-retry=\"{job_a}\"]')")
+        hint = h.js(f"""(() => {{
+          const b = document.querySelector('[data-retry="{job_a}"]');
+          return b ? {{title: b.title, aria: b.getAttribute('aria-label')}} : null;
+        }})()""")
+        check("取消任务显示重试，且提示目标变化",
+              hint and "合并" in hint["title"] and "不删除" in hint["title"]
+              and hint["aria"] == hint["title"], str(hint))
+        original_a = h.job(job_a)
+        before_ids = set(h.js("window.__queueIds()") or [])
+        h.js(f"""(() => {{
+          const b = document.querySelector('[data-retry="{job_a}"]');
+          b.click();
+          b.click();      // already disabled -- must not submit twice
+          return true;
+        }})()""")
+        h.wait_js("(document.querySelector('#toasts')?.textContent || '').includes('重试这个任务')")
+        check("重试后提示目标变化", True)
+        new_id, extra_ids = None, []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            extra_ids = [job_id for job_id in (h.js("window.__queueIds()") or [])
+                         if job_id not in before_ids]
+            if extra_ids:
+                new_id = extra_ids[0]
+                break
+            time.sleep(0.05)
+        check("取消任务重试只提交一个新任务", new_id is not None and len(extra_ids) == 1,
+              str(extra_ids))
+        retried_a = h.wait_job(new_id)
+        check("重试任务按原请求参数重新执行",
+              retried_a["status"] == "done"
+              and retried_a["inputs"] == original_a["inputs"]
+              and retried_a["destPath"] == original_a["destPath"]
+              and retried_a["format"] == original_a["format"],
+              f"status={retried_a['status']} inputs={retried_a['inputs']}")
+        check("重试产物落在原目标目录",
+              bool(retried_a["outputs"])
+              and Path(retried_a["outputs"][0]).is_file()
+              and Path(retried_a["outputs"][0]).parent == dirs["A_dir"],
+              str(retried_a["outputs"]))
 
         # ------------------- 3. drop B after cancel, no manual clear; B only
         h.drop([files["B"]])
@@ -703,6 +754,7 @@ def main():
         traceback.print_exc()
         ok = False
     print(f"compress-draft: {time.monotonic() - started:.1f}s")
+    print(f"{check.ok} passed, {check.fail} failed")
     return 0 if ok else 1
 
 

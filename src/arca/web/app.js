@@ -1059,13 +1059,41 @@ function jobSub(job) {
    list is built once per job and then patched in place. */
 const QNODES = new Map();          // job id -> card element
 
+/* Cancelling keeps whatever was already written (we never delete partial
+   output), so the hint spells out the real cleanup contract for each kind --
+   including fresh vs merge extraction, where a retry may overwrite same-name
+   files and that cannot be undone. */
+function cancelHint(job) {
+  if (job.kind === 'extract') {
+    if (job.mode === 'merge') {
+      return '取消任务（已解出的文件会保留；重试仍会合并，同名文件可能被覆盖，无法撤销）';
+    }
+    return '取消任务（已解出的文件会保留；重试会合并到目标目录，不删除原有文件）';
+  }
+  if (job.kind === 'compress') {
+    return '取消任务（已写出的归档或分卷会保留；重试会重新压缩，目标同名文件可能被覆盖）';
+  }
+  return '取消任务（已写出的文件会保留）';
+}
+
+function retryHint(job) {
+  if (job.kind === 'extract') {
+    if (job.mode === 'merge') return '重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销）';
+    return '重试这个任务（目标已存在时合并，不删除原有文件）';
+  }
+  if (job.kind === 'compress') return '重试这个任务（目标已存在时合并，不删除原有文件）';
+  return '重试这个任务';
+}
+
 function jobActions(job) {
   const actions = [];
   if (job.status === 'running' || job.status === 'queued') {
-    actions.push(`<button class="icon-btn" data-cancel="${job.id}" title="取消任务（已写出的文件会保留）" aria-label="取消任务，已写出的文件会保留">${icon('i-stop')}</button>`);
+    const hint = cancelHint(job);
+    actions.push(`<button class="icon-btn" data-cancel="${job.id}" title="${esc(hint)}" aria-label="${esc(hint)}">${icon('i-stop')}</button>`);
   }
-  if (job.status === 'error') {
-    actions.push(`<button class="btn ghost" data-retry="${job.id}" aria-label="重试这个任务">重试</button>`);
+  if (job.status === 'error' || job.status === 'cancelled') {
+    const hint = retryHint(job);
+    actions.push(`<button class="btn ghost" data-retry="${job.id}" title="${esc(hint)}" aria-label="${esc(hint)}">重试</button>`);
   }
   if (job.status === 'done') {
     actions.push(`<button class="icon-btn" data-reveal="${esc(job.outputs[0] || job.destPath || '')}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>`);
@@ -2106,7 +2134,23 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
 function modalize(back) {
   const shell = document.querySelector('.shell');
   const opener = document.activeElement;
+  // Sheets stack (settings → update dialog → ...).  Only the top sheet may be
+  // exposed as a modal dialog: everything underneath gets inert + aria-hidden
+  // and loses aria-modal, so a screen reader cannot wander into the old layer.
+  const saved = [...document.querySelectorAll('.sheet-back')]
+    .filter((el) => el !== back)
+    .map((el) => ({
+      el,
+      inert: el.inert,
+      ariaHidden: el.getAttribute('aria-hidden'),
+      modals: [...el.querySelectorAll('[aria-modal]')].map((d) => [d, d.getAttribute('aria-modal')]),
+    }));
   if (shell && 'inert' in shell) shell.inert = true;
+  for (const s of saved) {
+    if ('inert' in s.el) s.el.inert = true;
+    s.el.setAttribute('aria-hidden', 'true');
+    for (const [dialog] of s.modals) dialog.removeAttribute('aria-modal');
+  }
   const onKey = (e) => {
     if (e.key !== 'Tab') return;
     const items = [...back.querySelectorAll(FOCUSABLE)]
@@ -2122,11 +2166,31 @@ function modalize(back) {
   (firstFocus || back).focus({ preventScroll: true });
   return () => {
     back.removeEventListener('keydown', onKey);
-    // Sheets stack (settings → update dialog). Removing the top one must not
-    // re-enable the shell or drop focus while a sheet underneath is still up.
-    const underneath = [...document.querySelectorAll('.sheet-back')].filter((el) => el !== back);
+    // Restore only layers that are still on screen; an async close may have
+    // removed one underneath while this sheet was open.
+    for (const s of saved) {
+      if (!s.el.isConnected) continue;
+      if ('inert' in s.el) s.el.inert = s.inert;
+      if (s.ariaHidden === null) s.el.removeAttribute('aria-hidden');
+      else s.el.setAttribute('aria-hidden', s.ariaHidden);
+      for (const [dialog, value] of s.modals) {
+        if (dialog.isConnected && value !== null) dialog.setAttribute('aria-modal', value);
+      }
+    }
+    /**
+     * Sheets stack (settings → update dialog). Removing the top one must not
+     * re-enable the shell or drop focus while a sheet underneath is still up.
+     */
+    const underneath = [...document.querySelectorAll('.sheet-back')].filter((el) => el !== back && el.isConnected);
     if (shell && 'inert' in shell) shell.inert = underneath.length > 0;
     if (opener && opener.isConnected && opener.focus) opener.focus({ preventScroll: true });
+    else {
+      // Opener was removed while the sheet was open (async close): fall back
+      // to the newly top sheet, or to the page when nothing is left.
+      const top = underneath[underneath.length - 1];
+      const target = (top && top.querySelector(FOCUSABLE)) || document.querySelector('.shell');
+      if (target && target.focus) target.focus({ preventScroll: true });
+    }
   };
 }
 
@@ -3386,10 +3450,12 @@ function wireEvents() {
   $('#q-list').addEventListener('click', async (e) => {
     const retry = e.target.closest('[data-retry]');
     if (retry) {
+      const hint = retry.getAttribute('title') || '';
       retry.disabled = true;
       try {
         await api('/jobs/retry', { id: retry.dataset.retry });
         refreshJobsNow();
+        if (hint) toast(hint);
       } catch (err) {
         toast(err.message, 'err');
         retry.disabled = false;

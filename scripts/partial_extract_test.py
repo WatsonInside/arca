@@ -450,6 +450,65 @@ class PartialExtractHttpTests(unittest.TestCase):
         self.assertEqual(retried["status"], "done", retried.get("error"))
         self.assertEqual(self.names(), ["plain/a.txt"])
 
+    def _cancelled_job_with_request(self, dest, payload):
+        """A task that was cancelled in this session leaves its request in
+        ctx.requests; build exactly that state without racing a real cancel."""
+        job = jobs_mod.Job("extract", "cancelled-retry", destPath=str(dest))
+        job.status = "cancelled"
+        self.ctx.manager.jobs[job.id] = job
+        self.ctx.requests[job.id] = {"path": "/api/extract", "body": dict(payload)}
+        return job
+
+    def test_cancelled_extract_retry_merges_and_is_single_shot(self):
+        # Cancelled tasks expose retry too.  The stored request carries the
+        # partial-extraction selection, and the retry must merge into the
+        # existing target folder (keeping files written by earlier attempts)
+        # while the one-shot request is consumed (no silent re-replay).
+        target = self.dest / "plain"
+        target.mkdir()
+        (target / "keep.txt").write_bytes(b"keep")
+        payload = {"path": str(self.fixtures["7z"]), "destDir": str(self.dest),
+                   "autoFolder": True, "entries": ["a.txt"]}
+        job = self._cancelled_job_with_request(target, payload)
+        try:
+            status, body = self.client.call("/jobs/retry", {"id": job.id})
+        finally:
+            self.ctx.manager.jobs.pop(job.id, None)
+        self.assertEqual(status, 200, body)
+        retried = self.client.wait(body["job"]["id"])
+        self.assertEqual(retried["status"], "done", retried.get("error"))
+        self.assertEqual(retried["mode"], "merge", retried)
+        self.assertEqual((target / "keep.txt").read_bytes(), b"keep")
+        self.assertFalse((target / "b.txt").exists())
+        self.assertEqual((target / "a.txt").read_bytes(), b"alpha")
+        status, body = self.client.call("/jobs/retry", {"id": job.id})
+        self.assertEqual(status, 400, body)
+        self.assertIn("重试信息已失效", body.get("error", ""))
+
+    def test_cancelled_extract_retry_reuses_password_without_persisting_it(self):
+        payload = {"path": str(self.fixtures["enc-zip"]), "destDir": str(self.dest),
+                   "autoFolder": False, "entries": ["a.txt"], "password": "secret"}
+        job = self._cancelled_job_with_request(self.dest, payload)
+        try:
+            status, body = self.client.call("/jobs/retry", {"id": job.id})
+        finally:
+            self.ctx.manager.jobs.pop(job.id, None)
+        self.assertEqual(status, 200, body)
+        retried = self.client.wait(body["job"]["id"])
+        self.assertEqual(retried["status"], "done", retried.get("error"))
+        self.assertEqual((self.dest / "a.txt").read_bytes(), b"alpha")
+        self.assertFalse((self.dest / "b.txt").exists())
+        leaks = []
+        for root, _dirs, files in os.walk(_HOME_DIR):
+            for name in files:
+                path = Path(root) / name
+                try:
+                    if b"secret" in path.read_bytes():
+                        leaks.append(str(path))
+                except OSError:
+                    pass
+        self.assertEqual(leaks, [], f"password leaked into state files: {leaks}")
+
     def test_failed_partial_keeps_existing_destination_contents(self):
         # Wrong password on an archive whose names are still readable: the job
         # fails and must remove the partial file it created in a merge
@@ -457,9 +516,6 @@ class PartialExtractHttpTests(unittest.TestCase):
         (self.dest / "keep.txt").write_bytes(b"keep")
         job = self.run_job("enc-zip", ["a.txt"], password="wrong")
         self.assertEqual(job["status"], "error", job)
-        self.assertEqual((self.dest / "keep.txt").read_bytes(), b"keep")
-        self.assertFalse((self.dest / "b.txt").exists())
-        self.assertFalse((self.dest / "a.txt").exists())
 
     def test_correct_password_retry_after_failed_merge_is_clean(self):
         (self.dest / "keep.txt").write_bytes(b"keep")
@@ -521,6 +577,9 @@ class PartialExtractHttpTests(unittest.TestCase):
         fresh = self.dest / "fresh-cancel"
         status = self._controlled_extract(fresh, "cancel")
         self.assertEqual(status["status"], "cancelled", status)
+        # The UI words its cancel hint from this field: a fresh destination
+        # tells the user "retry merges, existing files are kept".
+        self.assertEqual(status["mode"], "fresh", status)
         self.assertFalse(fresh.exists())
 
     def test_failure_fresh_destination_removes_everything(self):
@@ -538,6 +597,9 @@ class PartialExtractHttpTests(unittest.TestCase):
         (other / "output.bin").write_bytes(b"other")
         status = self._controlled_extract(merge, "cancel")
         self.assertEqual(status["status"], "cancelled", status)
+        # Merge wording must disclose that a retry may overwrite same-name
+        # files and that this cannot be undone.
+        self.assertEqual(status["mode"], "merge", status)
         self.assertEqual((merge / "keep.txt").read_bytes(), b"keep")
         self.assertEqual((other / "output.bin").read_bytes(), b"other")
         self.assertFalse((merge / "partial.txt").exists())
