@@ -137,6 +137,34 @@ class Handler(BaseHTTPRequestHandler):
         obj = keyring.redact(obj, getattr(self, "_secrets", ()))
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
+    def _retry_plan(self, jid: str):
+        """只读返回一份可预填的重试计划：不创建任务、不消费原请求。"""
+        if not jid:
+            return self._json({"ok": False, "error": "缺少任务 id"})
+        ctx = self.ctx
+        doc = util.read_json(jobs_mod.retry_request_path(jid), None)
+        plan = error = None
+        if isinstance(doc, dict) and isinstance(doc.get("request"), dict):
+            plan, error = jobs_mod.retry_plan(ctx.engine, doc["request"],
+                                              doc.get("kind") or "")
+            if plan is not None:
+                plan["request"]["passwordRequired"] = bool(doc.get("passwordRequired"))
+        if plan is None:
+            record = getattr(ctx, "requests", {}).get(jid)
+            if record:
+                endpoint = (record.get("path") or "").rsplit("/", 1)[-1]
+                kind = {"compress": "compress", "extract": "extract",
+                        "test": "test"}.get(endpoint, "")
+                body = record.get("body") or {}
+                req = jobs_mod.safe_request(kind, body)
+                plan, error = jobs_mod.retry_plan(ctx.engine, req, kind)
+                if plan is not None:
+                    plan["request"]["passwordRequired"] = bool(body.get("password"))
+        if plan is None:
+            return self._json({"ok": False,
+                               "error": error or "该任务没有可用的重试信息"})
+        return self._json({"ok": True, "plan": plan})
+
     def _password(self, body, entry):
         password = body.get("password") or ""
         if not isinstance(password, str):
@@ -297,6 +325,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._test(body)
             if path == "/api/preflight":
                 return self._preflight(body)
+            if path == "/api/jobs/retry-plan":
+                return self._retry_plan(str(body.get("id") or ""))
             if path == "/api/jobs/retry":
                 jid = str(body.get("id") or "")
                 record = getattr(ctx, "requests", {}).get(jid)
@@ -722,7 +752,8 @@ class Handler(BaseHTTPRequestHandler):
             label = "压缩 " + os.path.basename(target)
             job = jobs_mod.Job("compress", label, subtitle=_join_inputs(inputs),
                                destPath=dest_dir, format=fmt.upper(), inputs=inputs,
-                               planned=target, secrets=[pw])
+                               planned=target, secrets=[pw],
+                               request=jobs_mod.safe_request("compress", body))
             if overwrite:
                 # T06：旧集合不在这里删除。新档先写隐藏 staging，回读校验
                 # 通过后同卷 rename 替换；切换前失败/取消/崩溃都不碰旧档。
@@ -836,7 +867,8 @@ class Handler(BaseHTTPRequestHandler):
             job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
                                srcPath=entry, destPath=dest, planned=dest,
                                secrets=[password], bucket=dest_root, total=total,
-                               format=(info.get("label") or ""))
+                               format=(info.get("label") or ""),
+                               request=jobs_mod.safe_request("extract", body))
             remembered = (self.ctx.saved_passwords.remember(
                 entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
                           if body.get("remember") is True else False)
@@ -855,7 +887,8 @@ class Handler(BaseHTTPRequestHandler):
         password, saved = self._password(body, entry)
         job = jobs_mod.Job("test", "校验 " + os.path.basename(entry), secrets=[password],
                            srcPath=entry, planned=entry,
-                           format=(body.get("info") or {}).get("label", ""))
+                           format=(body.get("info") or {}).get("label", ""),
+                           request=jobs_mod.safe_request("test", body))
         remembered = (self.ctx.saved_passwords.remember(
             entry, password, opt_in=True, auth=self.ctx.settings.get("passwordAuth", "off"))
                       if body.get("remember") is True else False)

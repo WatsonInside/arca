@@ -23,7 +23,7 @@ class Job:
                  "item", "speed", "eta", "total", "done", "outputs", "error",
                  "created", "started", "finished", "cancel", "result", "log",
                  "srcPath", "destPath", "format", "sizeText", "inputs", "bucket",
-                 "planned", "mode", "_lock", "_task", "_secrets")
+                 "planned", "mode", "request", "_lock", "_task", "_secrets")
 
     def __init__(self, kind: str, title: str, **extra):
         self.id = uuid.uuid4().hex[:12]
@@ -57,6 +57,9 @@ class Job:
         # fresh vs merge is decided by the running extract task; the UI reads it
         # to word cancel/retry hints with the real cleanup contract.
         self.mode = extra.get("mode", "")
+        # 可重试的安全参数（白名单，绝不含密码）：只用于中断任务的"预填重开"，
+        # 不进入 to_dict()/UI，也不参与自动执行。
+        self.request = extra.get("request") or None
         self.sizeText = ""
         # Kept so a finished compression can be repeated from its context menu
         # without the user re-picking every file.
@@ -101,6 +104,98 @@ class Job:
                 self.eta = int(remain / self.speed) if self.speed else None
             elif self.percent >= 99.9:
                 self.eta = 0
+
+
+JOURNAL_SCHEMA = 2
+
+_SAFE_REQUEST_FIELDS = {
+    "compress": ("inputs", "destDir", "name", "format", "level", "method",
+                 "solid", "splitBytes", "excludeMeta", "encryptNames",
+                 "threads", "par2Percent", "par2Single", "overwrite"),
+    "extract": ("path", "destDir", "autoFolder", "overwrite", "entries"),
+    "test": ("path",),
+}
+
+
+def safe_request(kind: str, body: dict) -> dict:
+    """从一次真实请求里提取可安全持久化的参数。
+
+    白名单最小化：不含密码、不记得密码标记、不含引擎路径与其他敏感字段。
+    """
+    req = {}
+    for key in _SAFE_REQUEST_FIELDS.get(kind, ()):
+        if key not in body:
+            continue
+        value = body[key]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            req[key] = value
+        elif isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+            req[key] = list(value)
+    if isinstance(req.get("inputs"), list):
+        req["inputs"] = [p for p in req["inputs"] if isinstance(p, str)]
+    if isinstance(req.get("entries"), list):
+        req["entries"] = [p for p in req["entries"] if isinstance(p, str)]
+    if isinstance(req.get("format"), str):
+        req["format"] = req["format"][:12]
+    return req
+
+
+def retry_request_path(job_id: str) -> str:
+    return util.state_path(os.path.join("retry-requests", job_id + ".json"))
+
+
+def _write_retry_request(record: dict) -> None:
+    try:
+        os.makedirs(util.state_path("retry-requests"), exist_ok=True)
+        util.write_json(retry_request_path(record["id"]), {
+            "schema": JOURNAL_SCHEMA,
+            "id": record["id"],
+            "kind": record.get("kind") or "",
+            "request": record.get("request") or {},
+            "created": record.get("created") or time.time(),
+            "passwordRequired": bool(record.get("passwordRequired")),
+        })
+    except Exception as exc:      # 状态目录只读/磁盘满时降级，不阻断恢复
+        print("[arca] 保存可重试参数失败:", exc, file=sys.stderr)
+
+
+def retry_plan(engine, request: dict, kind: str):
+    """校验一份持久化请求，返回 (plan, error)。
+
+    只做只读校验与预填数据准备，绝不排队、绝不自动执行；源对象已被移动/
+    删除时给出明确错误或警告，由用户重新确认后才提交。
+    """
+    req = dict(request or {})
+    warnings = []
+    if kind == "compress":
+        inputs = [p for p in (req.get("inputs") or []) if isinstance(p, str)]
+        alive = [p for p in inputs if os.path.exists(p)]
+        missing = [p for p in inputs if p not in alive]
+        if not alive:
+            return None, "原任务的输入文件都不在了，无法重开"
+        if missing:
+            warnings.append("有 %d 个输入已不存在，已从预填中移除" % len(missing))
+        req["inputs"] = alive
+        dest = req.get("destDir") or ""
+        if dest and not os.path.isdir(dest):
+            warnings.append("目标目录已不存在，开始时将重新创建")
+    elif kind in ("extract", "test"):
+        path = req.get("path") or ""
+        if not path or not os.path.exists(path):
+            return None, "原归档已不存在，无法重开"
+        if kind == "extract":
+            dest = req.get("destDir") or ""
+            if dest and not os.path.isdir(dest):
+                warnings.append("目标目录已不存在，开始时将重新创建")
+            entries = req.get("entries")
+            if isinstance(entries, list):
+                kept = [p for p in entries if isinstance(p, str)]
+                if kept:
+                    warnings.append("原任务为部分解压；条目选择已失效，请在预览中重新勾选")
+                req.pop("entries", None)
+    else:
+        return None, "该任务类型不支持预填重开"
+    return {"kind": kind, "request": req, "warnings": warnings}, None
 
 
 class JobManager:
@@ -271,6 +366,23 @@ class JobManager:
                 "unfinished": unfinished,
                 "seconds": round(time.time() - started, 3)}
 
+    def _prune_retry_requests(self) -> None:
+        """只保留仍在 history 里的可重试参数，避免状态目录无界增长。"""
+        keep = {item.get("id") for item in self.history if isinstance(item, dict)}
+        root = util.state_path("retry-requests")
+        try:
+            names = os.listdir(root)
+        except OSError:
+            return
+        for name in names:
+            if name.startswith(".") or not name.endswith(".json"):
+                continue
+            if name[:-5] not in keep:
+                try:
+                    os.remove(os.path.join(root, name))
+                except OSError:
+                    pass
+
     def clear_finished(self) -> None:
         with self._cv:
             for jid in list(self.order):
@@ -283,6 +395,7 @@ class JobManager:
             # so the button appeared to do nothing.
             had_history = bool(self.history)
             self.history = []
+        self._prune_retry_requests()
         if had_history:
             util.write_json(util.state_path("history.json"), [])
 
@@ -303,8 +416,12 @@ class JobManager:
             "created": job.created, "srcPath": job.srcPath,
             "destPath": job.destPath, "planned": job.planned,
             "format": job.format, "total": job.total,
-            "bucket": job.bucket,
+            "bucket": job.bucket, "schema": 1,
+            "passwordRequired": bool(job._secrets),
         }
+        if isinstance(job.request, dict) and job.request:
+            record["schema"] = JOURNAL_SCHEMA
+            record["request"] = dict(job.request)
         record.update(extra)
         with self._pending_lock:
             util.write_json(self._journal_path(job.id), record)
@@ -389,6 +506,9 @@ class JobManager:
                 if job_id in known:
                     continue              # it actually finished before the crash
                 mode = record.get("mode") or ""
+                retryable = (int(record.get("schema") or 1) >= JOURNAL_SCHEMA
+                             and isinstance(record.get("request"), dict)
+                             and bool(record.get("request")))
                 item = {
                     "id": job_id,
                     "kind": record.get("kind") or "extract",
@@ -402,15 +522,20 @@ class JobManager:
                     "sizeText": "",
                     "status": "interrupted",
                     "result": {"interrupted": True, "mode": mode,
-                               "expected": int(record.get("total") or 0)},
+                               "expected": int(record.get("total") or 0),
+                               "retryable": retryable},
                     "note": _interrupted_note(mode),
                     "recoveredAt": now,
                 }
+                if retryable:
+                    _write_retry_request(record)
                 self.history.insert(0, item)
                 recovered.append(item)
             if recovered:
                 self.history = self.history[:40]
                 util.write_json(util.state_path("history.json"), self.history)
+        if recovered:
+            self._prune_retry_requests()
         return recovered
 
     # ------------------------------------------------------------------ worker

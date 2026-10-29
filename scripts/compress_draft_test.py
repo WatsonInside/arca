@@ -379,25 +379,33 @@ def run(port_file):
         check("侧栏最近任务包含取消任务",
               job_a in (h.js("window.__recentIds()") or []))
 
-        # ---------------------- 2b. cancelled task: retry reuses its request
+        # ---------------------- 2b. cancelled task: retry opens prefilled draft
         h.wait_js(f"!!document.querySelector('[data-retry=\"{job_a}\"]')")
         hint = h.js(f"""(() => {{
           const b = document.querySelector('[data-retry="{job_a}"]');
           return b ? {{title: b.title, aria: b.getAttribute('aria-label')}} : null;
         }})()""")
-        check("取消任务显示重试，且提示目标变化",
-              hint and "合并" in hint["title"] and "不删除" in hint["title"]
+        check("取消任务显示重试，且说明只预填不自动排队",
+              hint and "预填" in hint["title"] and "不会自动排队" in hint["title"]
               and hint["aria"] == hint["title"], str(hint))
         original_a = h.job(job_a)
         before_ids = set(h.js("window.__queueIds()") or [])
         h.js(f"""(() => {{
           const b = document.querySelector('[data-retry="{job_a}"]');
           b.click();
-          b.click();      // already disabled -- must not submit twice
           return true;
         }})()""")
-        h.wait_js("(document.querySelector('#toasts')?.textContent || '').includes('重试这个任务')")
-        check("重试后提示目标变化", True)
+        h.wait_js("(document.querySelector('#toasts')?.textContent || '').includes('已按上次参数预填')")
+        time.sleep(1.0)
+        after_prefill = set(h.js("window.__queueIds()") or [])
+        check("预填不会自动提交新任务", after_prefill == before_ids,
+              str(sorted(after_prefill - before_ids)))
+        draft = h.draft()
+        check("预填的草稿恢复原输入",
+              [r["name"] for r in draft["rows"]]
+              == [Path(p).name for p in original_a["inputs"]],
+              str([r["name"] for r in draft["rows"]]))
+        h.js("document.querySelector('#c-start').click()")
         new_id, extra_ids = None, []
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
@@ -407,8 +415,8 @@ def run(port_file):
                 new_id = extra_ids[0]
                 break
             time.sleep(0.05)
-        check("取消任务重试只提交一个新任务", new_id is not None and len(extra_ids) == 1,
-              str(extra_ids))
+        check("用户确认后才提交，且只提交一个新任务",
+              new_id is not None and len(extra_ids) == 1, str(extra_ids))
         retried_a = h.wait_job(new_id)
         check("重试任务按原请求参数重新执行",
               retried_a["status"] == "done"

@@ -1077,12 +1077,13 @@ function cancelHint(job) {
 }
 
 function retryHint(job) {
+  const tail = '；只预填原参数，确认后再开始，不会自动排队';
   if (job.kind === 'extract') {
-    if (job.mode === 'merge') return '重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销）';
-    return '重试这个任务（目标已存在时合并，不删除原有文件）';
+    if (job.mode === 'merge') return '重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销' + tail + '）';
+    return '重试这个任务（目标已存在时合并，不删除原有文件' + tail + '）';
   }
-  if (job.kind === 'compress') return '重试这个任务（目标已存在时合并，不删除原有文件）';
-  return '重试这个任务';
+  if (job.kind === 'compress') return '重试这个任务（按上次参数预填，确认后再开始，不会自动排队）';
+  return '重试这个任务（预填原参数，确认后再开始）';
 }
 
 function jobActions(job) {
@@ -1189,6 +1190,63 @@ function historyLabel(item) {
   return item.status === 'done' ? '已完成' : item.status === 'error' ? '失败' : '已取消';
 }
 
+
+/** 预填重开（T10）：只把原任务的参数填回界面，绝不自动提交。
+ *  服务端 /api/jobs/retry-plan 返回已校验的安全参数与警告；密码永不回读。 */
+async function retryPrefill(id) {
+  const r = await api('/jobs/retry-plan', { id });
+  if (!r.ok) { toast(r.error || '该任务没有可用的重试信息', 'err'); return; }
+  const plan = r.plan || {};
+  const req = plan.request || {};
+  const warnings = Array.isArray(plan.warnings) ? plan.warnings.slice() : [];
+  if (plan.kind === 'compress') {
+    resetCompressDraft();
+    const c = state.c;
+    if (req.format) c.format = req.format;
+    if (typeof req.level === 'number') c.level = req.level;
+    if (req.method) c.method = req.method;
+    c.solid = req.solid !== false;
+    c.excludeMeta = req.excludeMeta !== false;
+    c.encryptNames = req.encryptNames !== false;
+    c.splitBytes = Number(req.splitBytes) || 0;
+    c.par2 = Number(req.par2Percent) > 0;
+    c.par2Pct = Number(req.par2Percent) || 5;
+    c.par2Single = !!req.par2Single;
+    c.dest = req.destDir || '';
+    c.name = req.name || '';
+    c.touchedName = !!req.name;
+    c.pw = '';
+    const paths = Array.isArray(req.inputs) ? req.inputs : [];
+    const stats = await Promise.all(paths.map(async (p) => {
+      const st = await statPath(p);
+      return st || { path: p, missing: true, size: 0, isDir: false };
+    }));
+    c.items = stats.filter(Boolean);
+    bumpDraft();
+    syncAutoDraftFields();
+    setView('compress');
+    renderCompress();
+    refreshTarget();
+    if (req.passwordRequired) warnings.push('原任务使用过密码，请重新输入密码后再开始');
+    toast('已按上次参数预填；确认后点击「开始压缩」', 'info', 'i-retry');
+  } else if (plan.kind === 'extract') {
+    await loadArchive(req.path);
+    if (state.x.info) {
+      state.x.dest = req.destDir || state.x.dest;
+      state.x.overwrite = req.overwrite || 'rename';
+      state.x.autoFolder = req.autoFolder !== false;
+      state.x.pw = '';
+      renderExtract();
+    }
+    if (req.passwordRequired) warnings.push('原归档使用过密码，请重新输入密码后再开始');
+    toast('已按上次参数预填；确认后点击「开始解压」', 'info', 'i-retry');
+  } else {
+    toast('该任务类型暂不支持预填重开', 'err');
+    return;
+  }
+  if (warnings.length) toast(warnings.join('；'), 'info');
+}
+
 function renderHistory(list) {
   const history = state.history.slice(0, 20);
   const sig = history.map((item) => `${item.id}:${item.status}:${item.finished || ''}`).join('|');
@@ -1204,11 +1262,13 @@ function renderHistory(list) {
       : item.result && item.result.parts > 1 ? `${item.result.parts} 个分卷`
         : item.sizeText || item.format || '—';
     const reveal = path ? `<button class="icon-btn" data-reveal="${esc(path)}" title="在 Finder 中显示" aria-label="在 Finder 中显示">${icon('i-reveal')}</button>` : '';
+    const retry = (item.status === 'interrupted' && item.result && item.result.retryable)
+      ? `<button class="btn ghost" data-retry="${esc(item.id)}" title="按上次参数预填，确认后再开始，不会自动排队" aria-label="按上次参数预填，确认后再开始，不会自动排队">重试</button>` : '';
     return `<div class="job history-item" data-history="${esc(item.id)}"${interrupted ? ` title="${esc(item.note || '')}"` : ''}>
       <div class="job-ico ${esc(item.status || 'done')}">${icon(KIND_ICON[item.kind] || 'i-box')}</div>
       <div class="job-main"><div class="job-top"><b>${esc(item.title || '历史任务')}</b></div>
       <div class="job-sub">${interrupted ? '' : `${esc(fmtDate(item.finished))}<span class="sep">·</span>`}${esc(result)}</div></div>
-      <div class="job-actions"><span class="pct">${esc(historyLabel(item))}</span>${reveal}</div>
+      <div class="job-actions"><span class="pct">${esc(historyLabel(item))}</span>${retry}${reveal}</div>
     </div>`;
   }).join('')}` : '';
 }
@@ -3455,14 +3515,12 @@ function wireEvents() {
   $('#q-list').addEventListener('click', async (e) => {
     const retry = e.target.closest('[data-retry]');
     if (retry) {
-      const hint = retry.getAttribute('title') || '';
       retry.disabled = true;
       try {
-        await api('/jobs/retry', { id: retry.dataset.retry });
-        refreshJobsNow();
-        if (hint) toast(hint);
+        await retryPrefill(retry.dataset.retry);
       } catch (err) {
         toast(err.message, 'err');
+      } finally {
         retry.disabled = false;
       }
       return;

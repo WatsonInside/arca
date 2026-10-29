@@ -398,6 +398,23 @@ LaunchServices 行为影响（锁是最后一道防线）；共用同一目录�
 --headless`：同 HOME 第二实例退出 3、不同 HOME 并行、退出后释放、锁文件 0600、
 并发启动唯一胜者），已接入 `scripts/all_test.py`（30 套件）。
 
+**中断任务预填重开（T10，2026-10-29）**：journal 升到 schema 2，只写入
+白名单安全参数（路径/目标/格式/级别/分割/par2 等），**不含密码、不含 remember
+标记、不含请求体原文**；只额外记录 `passwordRequired: true/false`。崩溃恢复时
+把这些参数落到 `state/retry-requests/<id>.json`，并在 history 记录里标
+`result.retryable = true`；旧 schema（v1）不会被猜成可重试。
+
+UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回预填计划，
+页面把草稿填好（压缩页或解压预览）后由用户点「开始压缩/开始解压」才提交。
+预填前会校验：源文件/归档不存在 → 明确报错；部分输入消失 → 移除并警告；
+部分解压的条目选择失效 → 回退为整包并警告；密码任务提示重新输入（密码永不
+回读）。`retry-requests` 随 history 清理与 40 条窗口修剪，避免无界增长。
+
+旧的后端 `POST /api/jobs/retry` 仍保留（供既有客户端/套件显式调用），但 UI
+不再走它；两者都不会在无人确认时自动重放。回归 `scripts/retry_plan_test.py`
+（8 项：白名单、journal v2、恢复 retryable、v1 不重试、缺失源/条目契约），已
+接入 `scripts/all_test.py`（31 套件）。
+
 ### 压缩草稿生命周期与竞态防护（2026-10-27）
 
 压缩页的草稿（待压缩列表、名称、保存位置）与后端请求是异步的，这里修过三类真实的
@@ -459,7 +476,7 @@ LaunchServices 行为影响（锁是最后一道防线）；共用同一目录�
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件，含 `shutdown`、`overwrite-txn` 与 `single-instance`）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件、T10 起 31 套件，含 `shutdown`、`overwrite-txn`、`single-instance` 与 `retry-plan`）。
 
 ### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
 
