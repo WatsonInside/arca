@@ -361,7 +361,7 @@ zipfile 快速路径或 `7zz l -slt` 列出条目，路径不安全的归档直�
 即使只选中无关条目，也可能因包里别处有链接而被拒绝。fresh/merge 回滚逻辑不变，
 仍按 T00 处理失败与取消。回归在 `scripts/extract_safety_test.py`（10 项真实 fixture：
 `../`、绝对路径、symlink 条目、既有 symlink 父目录、tar 穿越/链接、7zz 预检、
-干净归档、辅助函数），已接入 `scripts/all_test.py`（29 套件）。
+干净归档、辅助函数），已接入 `scripts/all_test.py`（30 套件）。
 
 **覆盖压缩的可恢复替换（T06，2026-10-29）**：覆盖写不再"先删旧档再压缩"。新集合
 写到目标同目录的隐藏 staging 名（`.<原名>.arca-txn-<job>-<rand>`），压缩完成后先用
@@ -385,6 +385,18 @@ PAR2 采用 best-effort：归档切换成功即算成功，PAR2 失败保留新�
 中止/取消、切换前旧档保留、staging 阶段恢复、switch-manifest/old/new 三处崩溃前滚、
 分卷后缀映射、PAR2 失败 best-effort、回读校验拒绝坏档、重复恢复幂等），已接入
 `scripts/all_test.py`（29 套件）。
+
+**同 HOME 单实例锁（T12-lite，2026-10-29）**：`state/instance.lock` 上用
+`flock(LOCK_EX|LOCK_NB)` 取进程级排他锁，锁在 `Settings/JobManager` 初始化与
+消费共享状态之前获取；文件里写一行 `pid=<n> home=<路径>` 便于诊断。第二个实例
+拿到锁失败时：headless 直接 stderr 说明并以退出码 3 结束（测试/脚本可判定）；
+GUI 弹 NSAlert 后同样退出 3，提示切到已有窗口或设置 `ARCA_HOME` 使用独立数据
+目录。锁随进程退出由 atexit 释放，异常退出由内核自动释放；不同 HOME（或
+`ARCA_HOME`）互不阻塞。边界：不做请求转交、不做跨用户锁；`open -n` 仍可能受
+LaunchServices 行为影响（锁是最后一道防线）；共用同一目录的两份不同版本 App
+也按同一规则拒绝。回归 `scripts/single_instance_test.py`（5 项真实 `.app
+--headless`：同 HOME 第二实例退出 3、不同 HOME 并行、退出后释放、锁文件 0600、
+并发启动唯一胜者），已接入 `scripts/all_test.py`（30 套件）。
 
 ### 压缩草稿生命周期与竞态防护（2026-10-27）
 
@@ -447,7 +459,7 @@ PAR2 采用 best-effort：归档切换成功即算成功，PAR2 失败保留新�
 自动回归：`scripts/interrupt_recovery_test.py`（4 个场景，真实
 `build/Arca-test.app --headless` + 每场景独立 HOME/TMPDIR；"仅 App 进程 SIGKILL"与
 "整个专用进程组 SIGKILL"分开；只对记录的 PID/进程组发信号，结束后断言进程组与端口
-回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件，含 `shutdown` 与 `overwrite-txn`）。
+回收）。已接入 `scripts/all_test.py`（R2 起全量 27 套件；T04a 起 28 套件、T06 起 29 套件、T12-lite 起 30 套件，含 `shutdown`、`overwrite-txn` 与 `single-instance`）。
 
 ### 取消与退出：子进程注册、有界收尾（R2，2026-10-29）
 

@@ -119,3 +119,15 @@ README 里宣称已实现。
   是**取消活动任务后退出**（有界 8 秒），且未做 GUI 关闭窗口的人工 E2E。
 - T01 的 7zz/par2 静默子进程与取消时延有单元回归；真实 app 的 Cmd-Q 人工
   验收尚未执行。
+
+## 7. 单实例边界（T12-lite，2026-10-29）
+
+同一 App Support 目录（默认 `~/Library/Application Support/Arca`，可用
+`ARCA_HOME` 替换主目录）只允许一个 Arca 进程持有 `instance.lock` 上的
+`flock` 排他锁；锁在 `Settings`/`JobManager` 初始化与消费历史、journal、
+组件缓存之前获取。
+
+- 第二个实例：headless 以退出码 3 结束并在 stderr 说明；GUI 弹提示后同样退出 3。
+- 不同 HOME/`ARCA_HOME`：互不阻塞，可并行（例如测试）。
+- 不做请求转交、不做跨用户锁；`open -n` 依赖 LaunchServices 与锁两层防护。
+- 锁文件为 0600，内容为 `pid=<n> home=<路径>`，退出（含异常退出）由内核释放。

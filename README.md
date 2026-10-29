@@ -132,7 +132,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 发送；之后可随时在「设置 → 更新来源与隐私」中修改或查看发送内容。聚合口径与对外数据
 接口见 [docs/STATS-API.md](docs/STATS-API.md)。
 
-**质量门禁**（`scripts/all_test.py` 一条命令跑完，29 个套件）：
+**质量门禁**（`scripts/all_test.py` 一条命令跑完，30 个套件）：
 
 | 套件 | 覆盖 |
 | --- | --- |
@@ -143,6 +143,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 | update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
 | partial-extract 35 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |
 | overwrite-txn 11 | 覆盖压缩的可恢复替换：staging、同卷 rename、崩溃前滚、PAR2 best-effort |
+| single-instance 5 | 同 HOME 单实例锁：第二实例拒绝、不同 HOME 隔离、并发启动唯一胜者 |
 | interrupt-recovery 4 | 崩溃/中断后的状态、任务日志与回滚边界（真实 .app + 隔离 HOME） |
 | jobwait 7 / menu-cleanup 9 | 任务等待时序、测试收尾策略 |
 | compress-draft | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |

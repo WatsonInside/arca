@@ -29,7 +29,7 @@ Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Pyth
 ## 常用命令（等价 Makefile）
 
 ```bash
-make test          # 全量门禁（29 套件，~3 分钟，发布前必须过）
+make test          # 全量门禁（30 套件，~3 分钟，发布前必须过）
 make test-fast     # node --check + design_audit + selftest + progress（快速反馈）
 make audit         # 设计规则确定性检查（0 = 干净）
 make bundle        # 组装 release/Arca.app

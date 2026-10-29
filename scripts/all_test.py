@@ -56,6 +56,7 @@ SUITES = [
     {"name": "fuzz-soak", "kind": "unittest", "script": "fuzz_soak_test", "deps": ["engine"], "min": 5},
     {"name": "interrupt-recovery", "kind": "unittest", "script": "interrupt_recovery_test", "deps": ["app"], "min": 5},
     {"name": "shutdown", "kind": "unittest", "script": "shutdown_test", "deps": [], "min": 10},
+    {"name": "single-instance", "kind": "unittest", "script": "single_instance_test", "deps": ["app"], "min": 5},
     {"name": "menu", "kind": "passed_failed", "script": "menu_test", "deps": ["headless", "chrome"],
      "headless": "short", "min": 90},
     {"name": "compress-draft", "kind": "passed_failed", "script": "compress_draft_test", "deps": ["headless", "chrome"],

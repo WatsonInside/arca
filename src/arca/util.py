@@ -1,6 +1,8 @@
 """Shared helpers for Arca."""
 from __future__ import annotations
 
+import atexit
+import fcntl
 import json
 import os
 import re
@@ -127,7 +129,10 @@ def parse_size(value, default=None):
 
 
 def app_support_dir() -> str:
-    path = os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME)
+    # ARCA_HOME 只替换"用户主目录"，便于测试/多配置目录隔离运行；
+    # 缺省仍是 ~/Library/Application Support/Arca。
+    home = os.environ.get("ARCA_HOME") or os.path.expanduser("~")
+    path = os.path.join(home, "Library", "Application Support", APP_NAME)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -343,3 +348,60 @@ def path_within(root: str, path: str) -> bool:
 def symlink_mode(mode: int) -> bool:
     """ZIP external_attr 高位里的 Unix 模式是否为符号链接。"""
     return (mode & 0o170000) == _SYMLINK_MODE
+
+
+_INSTANCE_LOCK_FD = None
+
+
+def _release_instance_lock() -> None:
+    global _INSTANCE_LOCK_FD
+    fd, _INSTANCE_LOCK_FD = _INSTANCE_LOCK_FD, None
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def acquire_instance_lock():
+    """同一 App Support 目录只允许一个 Arca 实例。
+
+    返回 (True, "") 表示当前进程拿到锁；返回 (False, holder) 表示另一个
+    实例正持有（holder 是对方写入的 pid/home 行，可能为空）。锁在进程退出时
+    由 atexit 释放；不阻塞、不做请求转交。
+    """
+    global _INSTANCE_LOCK_FD
+    if _INSTANCE_LOCK_FD is not None:
+        return True, ""
+    path = state_path("instance.lock")
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        # 连锁文件都建不出来时不额外阻塞启动：后续状态写入会各自降级。
+        return True, ""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            holder = os.pread(fd, 512, 0).decode("utf-8", "replace").strip()
+        except OSError:
+            holder = ""
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return False, holder
+    try:
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, ("pid=%d home=%s\n" % (os.getpid(), app_support_dir())).encode(),
+                  0)
+    except OSError:
+        pass
+    _INSTANCE_LOCK_FD = fd
+    atexit.register(_release_instance_lock)
+    return True, ""

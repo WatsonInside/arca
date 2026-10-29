@@ -1310,6 +1310,31 @@ def run(argv):
         except IndexError:
             port_file = None
 
+    # 单实例：共享状态（history/settings/components/journal/components 缓存）
+    # 只有一个写入者。锁必须在 Settings/JobManager 初始化之前拿到。
+    locked, holder = util.acquire_instance_lock()
+    if not locked:
+        detail = ("当前实例：" + holder) if holder else "无法读取现有实例信息"
+        if headless:
+            print("另一个 Arca 实例正在使用该用户目录，headless 启动已拒绝（"
+                  + detail + "）；如需并行测试请用 ARCA_HOME/HOME 隔离。",
+                  file=sys.stderr)
+            raise SystemExit(3)
+        message = ("Arca 已在运行。同一用户目录只允许一个实例，避免任务历史与"
+                   "设置互相覆盖。\n\n" + detail
+                   + "\n\n请切换到已打开的窗口；如果要使用独立的数据目录，"
+                     "请设置环境变量 ARCA_HOME。")
+        try:
+            import AppKit
+            AppKit.NSApplication.sharedApplication()
+            alert = AppKit.NSAlert.alloc().init()
+            alert.setMessageText_("Arca 已在运行")
+            alert.setInformativeText_(message)
+            alert.runModal()
+        except Exception:
+            print(message, file=sys.stderr)
+        raise SystemExit(3)
+
     settings = Settings()
     try:
         engine = eng.Engine(settings.get("rarPath") or None)
