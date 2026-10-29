@@ -696,6 +696,9 @@ def make_extract_task(mgr: JobManager, opts: dict):
                                                    fresh, entries))
 
         def run_engine():
+            # T04a: 路径/链接预检放在任务开始（而不是路由），重试路径同样生效；
+            # 失败时 guarded() 按 T00 回滚（fresh 删本次目录，merge 只清新增）。
+            mgr.engine.precheck_extract(entry, opts.get("password") or "")
             cmd = mgr.engine.build_extract_cmd({**opts, "archive": entry})
             total = int(opts.get("totalBytes") or 0)
             before_files = len(before[0]) if before else 0
@@ -818,6 +821,7 @@ def _extract_zipfix(job: Job, entry: str, dest: str, opts: dict,
     job.update(outputs=[dest], destPath=dest, srcPath=entry,
                result={"dest": dest, "files": out["files"],
                        "bytes": out["bytes"],
+                       "skipped": out.get("skipped", 0),
                        **({"partial": len(entries)} if entries else {}),
                        "renamed": plan.get("fixed"),
                        "encoding": plan.get("encoding")},
@@ -869,7 +873,9 @@ def _extract_zstd(job: Job, mgr: JobManager, entry: str, dest: str, opts: dict):
         raise RuntimeError("已取消")
     job.update(outputs=[dest], destPath=dest, srcPath=entry,
                result={"dest": dest, "files": out.get("files", 0),
-                       "bytes": out.get("bytes", 0), "zstd": mgr.engine.zstd_version},
+                       "bytes": out.get("bytes", 0),
+                       "skipped": out.get("skipped", 0),
+                       "zstd": mgr.engine.zstd_version},
                sizeText=util.human_size(out.get("bytes", 0) or total))
     job.progress(100)
 

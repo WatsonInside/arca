@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -271,3 +272,74 @@ def which_all(names):
         if p:
             found.append(p)
     return found
+
+
+# ---------------------------------------------------------------- 写入边界
+# T04a: 归档解压的路径与链接契约。字符串层面的检查只负责「明显危险」的
+# 名字；目录内既有符号链接/被替换的中间目录由 path_within() 在每级写入前
+# 再看一次。外部进程在检查之后替换目录的 TOCTOU 竞争无法仅靠 wrapper 消除。
+_SYMLINK_MODE = 0o120000
+
+
+def name_escape(name: str) -> bool:
+    """条目名是否试图逃出解压目录（绝对路径、盘符、``..`` 段、NUL）。"""
+    if not isinstance(name, str) or not name:
+        return False
+    raw = name.replace("\\", "/")
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
+        return True
+    if "\x00" in raw:
+        return True
+    return any(seg == ".." for seg in raw.split("/") if seg)
+
+
+def safe_join(root: str, name: str) -> str | None:
+    """把归档条目名安全地拼到 root 下；不安全的名字返回 None。"""
+    if not isinstance(name, str) or not name:
+        return None
+    raw = name.replace("\\", "/")
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or "\x00" in raw:
+        return None
+    parts = []
+    for seg in raw.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return None
+        parts.append(seg)
+    if not parts:
+        return None
+    return os.path.join(root, *parts)
+
+
+def path_within(root: str, path: str) -> bool:
+    """root 以内已存在的每一段都不得是符号链接；target 必须词法上位于 root 内。
+
+    目标目录本身可以还没创建（任务会先 makedirs）；一旦某一段已存在且是
+    symlink，就拒绝继续写入——这是「目录内预先放好的链接把文件引到外面」
+    的防线。检查之后被外部进程替换的竞争无法用纯 Python 消除。
+    """
+    root_abs = os.path.abspath(root)
+    target_abs = os.path.abspath(path)
+    if target_abs != root_abs and not target_abs.startswith(root_abs + os.sep):
+        return False
+    rel = os.path.relpath(target_abs, root_abs)
+    probe = root_abs
+    for part in ([] if rel == "." else rel.split(os.sep)):
+        if part in ("", "."):
+            continue
+        probe = os.path.join(probe, part)
+        try:
+            st = os.lstat(probe)
+        except FileNotFoundError:
+            return True          # 更深的部分尚未创建；已检查的父级都是真实目录
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode):
+            return False
+    return True
+
+
+def symlink_mode(mode: int) -> bool:
+    """ZIP external_attr 高位里的 Unix 模式是否为符号链接。"""
+    return (mode & 0o170000) == _SYMLINK_MODE

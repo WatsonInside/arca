@@ -172,8 +172,15 @@ class FuzzSoakTests(unittest.TestCase):
         for escaped in (self.work / "escape.txt", self.work / "escape2.txt",
                         self.work / "abs-escape.txt", Path("/abs-escape.txt")):
             self.assertFalse(escaped.exists(), escaped)
-        # Normal entries are unaffected by the hostile siblings.
-        self.assertTrue((dest / "normal.txt").is_file())
+        if job["status"] == "error":
+            # T04a 契约：含穿越路径的归档在任务开始即被拒绝，目标目录不得被写入，
+            # 也不会把恶意名字悄悄改名后解压。
+            self.assertIn("不安全路径", job.get("error", ""), job)
+            self.assertEqual([p for p in dest.rglob("*")], [])
+        else:
+            # 正常条目仍按原规则解压（当前实现走拒绝分支，这里保留对旧契约的
+            # 兼容断言，防止未来改成"跳过恶意条目继续解压"时漏测）。
+            self.assertTrue((dest / "normal.txt").is_file())
 
     def test_overlong_entry_names_do_not_escape(self):
         archive = self.work / "longnames.zip"

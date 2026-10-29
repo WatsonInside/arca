@@ -123,7 +123,7 @@
 ## C. 工程项（支撑 A/B 落地）
 
 ### C1. CI 化
-- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 27 套件的
+- **现状（2026-10-29，R1/R2 本地版）**：`scripts/all_test.py` 已收拢为 28 套件的
   一条命令全量门禁（含 headless 实例编排与隔离 HOME）；`make verify` / `make test-fast`
   提供快速预检。仍无远端 CI——本仓库没有 CI 运行记录，`make test` 是唯一完整可信信号。
 - 两轮执行都靠人工贴命令 + 对方手工跑门禁。把 `node --check` /

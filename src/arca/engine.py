@@ -370,6 +370,47 @@ class Engine:
         result = self._inspect_7zz(entry, raw_path, password, full=True)
         return result.get("entries") or []
 
+    # ------------------------------------------------------- extract precheck
+    def precheck_extract(self, raw_path: str, password: str = "") -> None:
+        """7-Zip / RAR 解压前的路径与链接预检（T04a）。
+
+        7zz 不在沙箱里运行，wrapper 只能先拒绝「明确危险」的归档（绝对路径、
+        ``..`` 段、符号链接条目），再依赖 7zz 自己的清理行为；检查之后目标目录
+        被外部进程替换的 TOCTOU 竞争无法被这里完全消除（见
+        docs/ENGINEERING-NOTES.md「写入边界与链接策略」）。
+        """
+        entry = self.resolve(raw_path)
+        if not os.path.exists(entry):
+            raise EngineError("文件不存在：" + raw_path)
+        if zst.is_zstd(entry):
+            return
+        # 统一用 7zz 的完整列表：zipfile 快速路径不保留 Unix 模式，看不到
+        # 符号链接条目；7zz 的 -slt 输出两种容器都能覆盖。加密归档交给真正
+        # 的 run() 去报密码错误，这里不把「读不到列表」当成安全结论。
+        cmd = [self.zz, "l", "-slt", entry]
+        if password:
+            cmd.insert(1, "-p" + password)
+        out = self._run_sync(cmd, timeout=120)
+        _meta, entries = _parse_slt(out)
+        if len(entries) > MAX_LIST_ENTRIES:
+            raise EngineError(
+                f"归档条目数超过上限（{MAX_LIST_ENTRIES:,}），暂不支持")
+        self._reject_unsafe_entries(entries)
+
+    @staticmethod
+    def _reject_unsafe_entries(entries: list[dict]) -> None:
+        bad = [e.get("path") or "" for e in entries
+               if util.name_escape(e.get("path") or "")]
+        links = [e.get("path") or "" for e in entries
+                 if _is_link_attributes(e.get("attributes") or "")]
+        if bad:
+            raise EngineError(
+                "归档包含不安全路径（%d 个，如 %s），已拒绝解压" % (len(bad), bad[0]))
+        if links:
+            raise EngineError(
+                "归档包含符号链接（%d 个，如 %s），已拒绝自动解压以避免路径逃逸；"
+                "请先在隔离环境手动解压" % (len(links), links[0]))
+
     def _inspect_zip(self, entry: str, raw_path: str, full: bool = False):
         import struct
         import zipfile
@@ -489,6 +530,10 @@ class Engine:
 
     def _inspect_result(self, entry, raw_path, meta, entries, needs_password,
                         password, name_encoding, full: bool = False):
+        # T04a: attributes are only used by precheck_extract(); keep them out of
+        # the payload so fast/slow listing shapes stay comparable.
+        entries = [{k: v for k, v in e.items() if k != "attributes"}
+                   for e in entries]
         ftype = (meta.get("Type") or "").strip()
         label = _type_label(ftype, entry)
         parts = self.parts(entry)
@@ -769,6 +814,20 @@ class Engine:
 
 
 # --------------------------------------------------------------------- parsing
+# T04a: 7zz -slt 的 Attributes 里，符号链接最明显的标志是 unix 模式 token
+# 以 l 开头（如 "A lrwxr-xr-x" / " lrwxrwxrwx"）；个别引擎只写单字母 L。
+_LINK_ATTR_RE = re.compile(r"(?:^|\s)l[rwxStTs-]{9}(?:\s|$)")
+
+
+def _is_link_attributes(attrs: str) -> bool:
+    attrs = (attrs or "").strip()
+    if not attrs:
+        return False
+    if _LINK_ATTR_RE.search(attrs):
+        return True
+    return "L" in attrs.split()
+
+
 def _parse_slt(text: str) -> tuple[dict, list[dict]]:
     meta: dict = {}
     entries: list[dict] = []
@@ -802,6 +861,9 @@ def _parse_slt(text: str) -> tuple[dict, list[dict]]:
                 "encrypted": data.get("Encrypted") == "+",
                 "crc": data.get("CRC", ""),
                 "method": data.get("Method", ""),
+                # T04a: 7zz -slt 的 Unix 模式可能出现 "lrwxr-xr-x"（符号链接），
+                # 解压预检靠它拒绝含链接的归档。
+                "attributes": data.get("Attributes", ""),
             })
         elif "Type" in data and not meta:
             meta = data

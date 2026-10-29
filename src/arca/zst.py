@@ -490,20 +490,28 @@ def extract(path: str, dest: str, overwrite: str = "rename", on_progress=None,
     total = max(1, _frame_size(binary, path) or 0)
     seen = [0]
     files = 0
+    skipped = 0
     with _decompress_stream(binary, path) as stream:
         with tarfile.open(fileobj=stream, mode="r|") as tf:
             for m in tf:
                 if cancel is not None and cancel.is_set():
                     raise ZstdError("已取消")
                 target = _safe_target(dest, m.name)
-                if target is None:
+                if target is None or not util.path_within(dest, target):
+                    skipped += 1
                     continue
                 if m.isdir():
                     os.makedirs(target, exist_ok=True)
                     continue
                 if not m.isfile():
+                    # tar 的 symlink/hardlink 成员不跟随：目标可能指向解压目录
+                    # 之外，解压后写入又可能穿过它（T04a）。
+                    skipped += 1
                     continue
                 os.makedirs(os.path.dirname(target) or dest, exist_ok=True)
+                if not util.path_within(dest, target):
+                    skipped += 1
+                    continue
                 if os.path.exists(target):
                     if overwrite == "skip":
                         continue
@@ -530,12 +538,16 @@ def extract(path: str, dest: str, overwrite: str = "rename", on_progress=None,
                 files += 1
     if on_progress:
         on_progress(100.0, "", 0.0)
-    return {"files": files, "bytes": seen[0]}
+    return {"files": files, "bytes": seen[0], "skipped": skipped}
 
 
 def _extract_single(binary, path, dest, overwrite, on_progress, cancel) -> dict:
     name = re.sub(r"\.(zst|tzst)$", "", os.path.basename(path), flags=re.I) or "输出"
     target = os.path.join(dest, name)
+    if not util.path_within(dest, target):
+        raise ZstdError("目标路径是符号链接或越出解压目录，已拒绝写入")
+    if os.path.islink(target):
+        raise ZstdError("目标路径是符号链接，已拒绝写入")
     if os.path.exists(target) and overwrite != "overwrite":
         target = _unique(target) if overwrite != "skip" else None
     if target is None:
@@ -573,12 +585,8 @@ def _extract_single(binary, path, dest, overwrite, on_progress, cancel) -> dict:
 
 
 def _safe_target(dest: str, name: str) -> str | None:
-    clean = name.lstrip("./")
-    if not clean or clean.startswith("..") or clean.startswith("/"):
-        return None
-    full = os.path.normpath(os.path.join(dest, clean))
-    root = os.path.normpath(dest)
-    return full if full == root or full.startswith(root + os.sep) else None
+    """Shared write-boundary rule (T04a); kept as a thin wrapper for tests."""
+    return util.safe_join(dest, name)
 
 
 def _unique(path: str) -> str:

@@ -537,6 +537,11 @@ class PartialExtractHttpTests(unittest.TestCase):
             def resolve(self, path):
                 return path
 
+            def precheck_extract(self, path, password=""):
+                # T04a: fake engine accepts any archive; the path/link contract
+                # itself is covered by scripts/extract_safety_test.py.
+                return None
+
             def build_extract_cmd(self, opts):
                 return ["slow", opts["dest"]]
 

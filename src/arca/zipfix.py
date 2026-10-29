@@ -21,6 +21,8 @@ import shutil
 import time
 import zipfile
 
+from . import util
+
 ENCODINGS = ("utf-8", "gbk", "big5")
 CHUNK = 1 << 20
 
@@ -94,11 +96,13 @@ def plan(path: str) -> dict | None:
         zf.close()
 
 
-def _target(dest: str, name: str) -> str:
-    """Join inside dest, dropping any attempt to escape it."""
-    parts = [p for p in name.replace("\\", "/").split("/")
-             if p not in ("", ".", "..")]
-    return os.path.join(dest, *parts) if parts else dest
+def _target(dest: str, name: str) -> str | None:
+    """Join inside dest; unsafe names (absolute, drive, ``..``, NUL) return None.
+
+    T04a: 以前这里把 ``..`` 段静默丢掉，等于悄悄改名；现在直接跳过并在结果
+    里计数，恶意路径不会被换名后写进目标目录。
+    """
+    return util.safe_join(dest, name)
 
 
 def _unique(path: str) -> str:
@@ -128,6 +132,7 @@ def extract(path: str, dest: str, names: dict, overwrite: str = "rename",
             on_progress=None, cancel=None, only=None) -> dict:
     out_files = 0
     out_bytes = 0
+    skipped = 0
     wanted = None if only is None else {
         str(sel).rstrip("/") for sel in only if str(sel).strip()}
     with zipfile.ZipFile(path) as zf:
@@ -141,10 +146,23 @@ def extract(path: str, dest: str, names: dict, overwrite: str = "rename",
                 raise ZipFixError("已取消")
             name = names.get(zi.filename) or zi.filename
             target = _target(dest, name)
+            if target is None or not util.path_within(dest, target):
+                skipped += 1
+                continue
+            # ZIP 可以带 Unix 模式：符号链接条目直接跳过（zipfile 不会安全地
+            # 重建链接，跟随它又可能把后续写入引到目标目录之外）。
+            if util.symlink_mode((zi.external_attr >> 16) & 0xFFFF):
+                skipped += 1
+                continue
             if zi.is_dir() or name.endswith("/"):
                 os.makedirs(target, exist_ok=True)
                 continue
-            os.makedirs(os.path.dirname(target) or dest, exist_ok=True)
+            parent = os.path.dirname(target) or dest
+            os.makedirs(parent, exist_ok=True)
+            # 目录内已有符号链接或检查后目录被替换时，不再写入。
+            if not util.path_within(dest, target):
+                skipped += 1
+                continue
             if os.path.exists(target):
                 if overwrite == "skip":
                     continue
@@ -169,7 +187,8 @@ def extract(path: str, dest: str, names: dict, overwrite: str = "rename",
             out_files += 1
         if on_progress:
             on_progress(100, "")
-    return {"files": out_files, "bytes": out_bytes, "total": total}
+    return {"files": out_files, "bytes": out_bytes, "total": total,
+            "skipped": skipped}
 
 
 def cleanup(dest: str, existed: bool) -> None:
