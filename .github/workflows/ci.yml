@@ -26,7 +26,7 @@ env:
 jobs:
   quick:
     if: github.event_name != 'workflow_dispatch' || inputs.mode == 'quick'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +57,7 @@ jobs:
           retention-days: 7
   full:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'full'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
