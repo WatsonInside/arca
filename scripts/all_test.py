@@ -59,7 +59,7 @@ SUITES = [
     {"name": "partial-extract", "kind": "unittest", "script": "partial_extract_test", "deps": ["engine"], "min": 30},
     {"name": "fuzz-soak", "kind": "unittest", "script": "fuzz_soak_test", "deps": ["engine"], "min": 5},
     {"name": "interrupt-recovery", "kind": "unittest", "script": "interrupt_recovery_test", "deps": ["app"], "min": 5},
-    {"name": "shutdown", "kind": "unittest", "script": "shutdown_test", "deps": [], "min": 10},
+    {"name": "shutdown", "kind": "unittest", "script": "shutdown_test", "deps": [], "min": 11},
     {"name": "single-instance", "kind": "unittest", "script": "single_instance_test", "deps": ["app"], "min": 5},
     {"name": "retry-plan", "kind": "unittest", "script": "retry_plan_test", "deps": [], "min": 8},
     {"name": "menu", "kind": "passed_failed", "script": "menu_test", "deps": ["headless", "chrome"],
@@ -308,8 +308,7 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
         command = PY + ["-c", bootstrap, str(app_source), str(old), str(port)]
     else:
         bootstrap = (
-            "import sys,json,signal,faulthandler;print('headless: start',flush=True);"
-            "faulthandler.dump_traceback_later(25,repeat=False);"
+            "import sys,json,signal;print('headless: start',flush=True);"
             "sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
             "from update_fixtures import upstream;fixture=upstream(sys.argv[4]);fixture.__enter__();"
             "print('headless: fixture ready',flush=True);"

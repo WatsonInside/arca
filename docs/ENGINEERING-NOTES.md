@@ -594,6 +594,12 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   现已统一改用 `scripts/_paths.build_dir()`（含 selftest 分卷夹具路径）。同一轮
   CI 还暴露 fuzz-soak 的 kill 场景竞态：快机器上 7zz 会在 kill 前完成，测试改为
   逐级加大负载重试，确保真的杀到运行中的进程。
+- **启动时跳过反向 DNS（2026-11-07 CI 首跑发现）**：`http.server.HTTPServer.server_bind()`
+  默认会 `socket.getfqdn(host)` 做反向解析；在无 DNS / 受限网络环境该调用可能阻塞
+  数十秒（CI 上 headless 启动 30s 超时，faulthandler 栈显示阻塞在 `getfqdn`）。
+  `_ArcaHTTPServer` 覆写 `server_bind()`，直接调用 `socketserver.TCPServer.server_bind`
+  并自行填写 `server_name`/`server_port`；`scripts/shutdown_test.py` 增加回归用例
+  （patch `socket.getfqdn` 抛错时 `Server` 仍可构造并启动）。
 - 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
   import 副作用/文案），默认套件 32→33。
 - 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长

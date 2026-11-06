@@ -8,6 +8,7 @@ import posixpath
 import re
 import shutil
 import sys
+import socketserver
 import threading
 import time
 import urllib.parse
@@ -1023,6 +1024,15 @@ class _ArcaHTTPServer(ThreadingHTTPServer):
     socket while the app shuts down) is not a server error.  Only these two
     connection-teardown exceptions are kept out of the log; every other
     uncaught exception still goes through socketserver's normal traceback."""
+
+    def server_bind(self):
+        # CI 首跑发现：HTTPServer.server_bind() 会调用 socket.getfqdn(host)
+        # 做反向 DNS，在无 DNS / 受限网络环境可能阻塞数十秒，导致 headless
+        # 启动超时。监听 127.0.0.1 时该名字只用于日志，跳过查询。
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]

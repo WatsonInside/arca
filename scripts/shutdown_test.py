@@ -266,5 +266,26 @@ class ShutdownTest(unittest.TestCase):
         self.assertIn("已取消", str(ctx.exception))
 
 
+class ServerBindTest(unittest.TestCase):
+    """CI 首跑暴露的启动阻塞回归：HTTPServer.server_bind() 默认会
+    socket.getfqdn(host) 做反向 DNS，在无 DNS / 受限网络环境可能阻塞数十秒，
+    使 headless 启动超时。启动路径不得依赖反向解析。"""
+
+    def test_server_bind_does_not_need_reverse_dns(self):
+        from unittest import mock
+        from arca import server
+
+        def _forbidden(*args, **kwargs):
+            raise AssertionError("启动时不应调用 socket.getfqdn 做反向解析")
+
+        with mock.patch("socket.getfqdn", _forbidden):
+            srv = server.Server(object())
+        try:
+            self.assertGreater(srv.port, 0)
+            srv.start()
+        finally:
+            srv.stop()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
