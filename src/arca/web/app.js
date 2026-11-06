@@ -2382,7 +2382,7 @@ async function openSettings(focus) {
             <button class="btn primary" id="set-qa-install">${integ.quickActions ? '重新安装' : '安装快速操作'}</button>
           </div>
         </div>
-        <details class="sheet-fold" ${(integ.ours || 0) < (integ.total || 0) ? 'open' : ''} id="set-def-detail">
+        <details class="sheet-fold" id="set-def-detail">
           <summary>${icon('i-chevron')}<span>逐项打开方式</span><span class="fold-hint">ZIP · 7Z · RAR · TAR · ZST</span></summary>
           ${mainTypes.map((t) => `
             <div class="sheet-row" data-def="${esc(t.ext)}">
