@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import cdp  # noqa: E402
 import jobwait  # noqa: E402
+from _paths import build_dir
 
 TERMINAL = ("done", "error", "cancelled")
 ZSTD_LEVEL = 5
@@ -311,7 +312,7 @@ def build_fixtures(root: Path):
 
 
 def run(port_file):
-    root = Path(tempfile.mkdtemp(prefix="compress-draft-", dir=ROOT / "build"))
+    root = Path(tempfile.mkdtemp(prefix="compress-draft-", dir=build_dir()))
     profile = root / "chrome-profile"
     dirs, files = build_fixtures(root)
     h = Harness(port_file)

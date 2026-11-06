@@ -55,6 +55,7 @@ from arca import engine as eng            # noqa: E402
 from arca import server as srv            # noqa: E402
 from arca.settings import Settings        # noqa: E402
 from acceptance_probe import make_zip     # noqa: E402
+from _paths import build_dir
 
 ZZ = str(ROOT / "vendor" / "7zz")
 TERMINAL = ("done", "error", "cancelled")
@@ -206,30 +207,45 @@ class FuzzSoakTests(unittest.TestCase):
 
     # ---------------------------------------------------------- killed proc
     def test_killed_engine_process_leaves_no_output_outside_dest(self):
-        src = self.work / "big.bin"
-        src.write_bytes(os.urandom(128 * 1024 * 1024))
-        archive = self.work / "big.7z"
-        subprocess.run([ZZ, "a", "-t7z", "-mx0", "-bso0", "-bsp0",
-                        str(archive), str(src)], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        src.unlink()
+        # 快机器上 7zz 可能在 kill 前完成（CI 首跑即此竞态）；用逐级加大的
+        # 负载重试，直到某次真正“杀到运行中的进程”，避免把未杀到误判为失败。
         dest = self.work / "out"
-        dest.mkdir()
-        proc = subprocess.Popen([ZZ, "x", str(archive), "-o" + str(dest),
-                                 "-bso0", "-bsp0"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.02)
-        proc.kill()
-        proc.wait(timeout=10)
-        self.assertNotEqual(proc.returncode, 0)
+        killed = False
+        size_mb = 0
+        for attempt_mb in (128, 512):
+            size_mb = attempt_mb
+            shutil.rmtree(dest, ignore_errors=True)
+            dest.mkdir()
+            src = self.work / "big.bin"
+            src.write_bytes(os.urandom(attempt_mb * 1024 * 1024))
+            archive = self.work / "big.7z"
+            if archive.exists():
+                archive.unlink()
+            subprocess.run([ZZ, "a", "-t7z", "-mx0", "-bso0", "-bsp0",
+                            str(archive), str(src)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            src.unlink()
+            proc = subprocess.Popen([ZZ, "x", str(archive), "-o" + str(dest),
+                                     "-bso0", "-bsp0"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.01)
+            if proc.poll() is not None:
+                proc.wait(timeout=10)
+                continue
+            proc.kill()
+            proc.wait(timeout=10)
+            self.assertNotEqual(proc.returncode, 0)
+            killed = True
+            break
+        self.assertTrue(killed, "engine finished before it could be killed")
         outside = [p for p in self.work.iterdir()
                    if p.name not in ("big.7z", "out")]
         self.assertEqual(outside, [], [str(p) for p in outside])
         extracted = dest / "big.bin"
         # The file may be partial (process was killed); it must never be
-        # reported as a completed 128 MiB output, and it must stay in dest.
+        # reported as a completed output, and it must stay in dest.
         if extracted.exists():
-            self.assertLess(extracted.stat().st_size, 128 * 1024 * 1024)
+            self.assertLess(extracted.stat().st_size, size_mb * 1024 * 1024)
 
     # ------------------------------------------------------- bounded soak
     def test_bounded_compress_extract_cycles(self):
@@ -821,8 +837,8 @@ def run_soak(argv):
               "调试请显式加 --allow-short", file=sys.stderr)
         return 2
 
-    (ROOT / "build" / ".tmp").mkdir(parents=True, exist_ok=True)
-    root = Path(tempfile.mkdtemp(prefix="arca-soak-", dir=ROOT / "build" / ".tmp"))
+    (build_dir() / ".tmp").mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix="arca-soak-", dir=build_dir() / ".tmp"))
     home = root / "home"
     tmpdir = root / "tmp"
     home.mkdir()
@@ -831,7 +847,7 @@ def run_soak(argv):
     os.environ["HOME"] = str(home)
     os.environ["TMPDIR"] = str(tmpdir)
     tempfile.tempdir = str(tmpdir)
-    json_path = Path(args.json) if args.json else ROOT / "build" / (
+    json_path = Path(args.json) if args.json else build_dir() / (
         f"soak-{time.strftime('%Y%m%d-%H%M%S')}.json")
     if not json_path.is_absolute():
         json_path = ROOT / json_path

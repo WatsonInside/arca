@@ -13,13 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "src"))
 from arca import server
+from _paths import build_dir
 
 MARGIN = 64 * 1024 * 1024
 
 
 class CompressSpaceTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        self.tmp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.source = self.root / "input.bin"
@@ -176,7 +177,7 @@ class UniqueTargetTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        self.tmp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(self.tmp.cleanup)
         self.dest = Path(self.tmp.name)
         self.handler = object.__new__(server.Handler)

@@ -308,10 +308,14 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
         command = PY + ["-c", bootstrap, str(app_source), str(old), str(port)]
     else:
         bootstrap = (
-            "import sys,json,signal;sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
+            "import sys,json,signal;print('headless: start',flush=True);"
+            "sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
             "from update_fixtures import upstream;fixture=upstream(sys.argv[4]);fixture.__enter__();"
+            "print('headless: fixture ready',flush=True);"
             "from arca import engine,server;from arca.settings import Settings;"
+            "print('headless: imports ready',flush=True);"
             "e=engine.Engine();assert e.version=='26.05',e.version;"
+            "print('headless: engine ready',flush=True);"
             "ctx=server.AppContext(e,Settings(),sys.argv[1]+'/arca/web');"
             "service=server.Server(ctx);service.start();"
             "open(sys.argv[3],'w').write(json.dumps({'port':service.port,'token':ctx.token}));"
@@ -333,7 +337,13 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
                 except (FileNotFoundError, ValueError):
                     pass
                 if time.monotonic() > deadline:
-                    raise RuntimeError("Headless readiness timed out")
+                    captured = ""
+                    try:
+                        output.seek(0)
+                        captured = output.read()[-2000:]
+                    except (OSError, ValueError):
+                        pass
+                    raise RuntimeError("Headless readiness timed out; output=%r" % captured)
                 time.sleep(.1)
             yield port
         finally:

@@ -14,11 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "src"))
 from arca import jobs, keyring, server
+from _paths import build_dir
 
 
 class KeyringTests(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.index = self.root / "saved-passwords.json"

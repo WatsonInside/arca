@@ -13,11 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "src"))
 from arca import server
+from _paths import build_dir
 
 
 class InspectCacheTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        self.tmp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.path = self.root / "archive.zip"

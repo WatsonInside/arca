@@ -2,13 +2,14 @@ from pathlib import Path
 import hashlib
 import subprocess
 import tempfile
+from _paths import build_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 # 生成物放在 gitignored 的 build/ 下：7z 归档内嵌时间戳，重建必有字节漂移，
 # 提交进 git 会让每次测试后工作区变脏、每个提交夹带 10 个二进制变更
 # （复核 P3/S1）。build/ 在外置卷上，恰是 AppleDouble `._*` 的产生地，
 # 生成前后各清一次（复核 Q1 / 任务书 §2.2.3）。
-FIXTURES = ROOT / "build/fixtures/split"
+FIXTURES = build_dir() / "fixtures/split"
 
 
 def _purge_appledouble():

@@ -41,9 +41,10 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
+from _paths import build_dir
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = ROOT / "build"
+BUILD = build_dir()
 BUNDLE = BUILD / "Arca-test.app"
 LAUNCHER = BUNDLE / "Contents/MacOS/Arca"
 ZZ = ROOT / "vendor" / "7zz"

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "src"))
 from arca import components, updates
+from _paths import build_dir
 
 DATA = b"source fixture" * 20000
 DIGEST = hashlib.sha256(DATA).hexdigest()
@@ -75,7 +76,7 @@ class ChecksumTests(unittest.TestCase):
                              "https://api.github.com/repos/ip7z/7zip/releases/tags/26.05")
 
     def test_stream_and_mismatch(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
+        with tempfile.TemporaryDirectory(dir=build_dir()) as tmp:
             path = Path(tmp) / NAME
             path.write_bytes(DATA)
             with patch.object(updates, "_official_checksum", return_value=DIGEST.upper()):
@@ -87,7 +88,7 @@ class ChecksumTests(unittest.TestCase):
     def test_component_failure_before_unpack_compile_record_and_cleanup(self):
         for cid in ("zstd", "par2"):
             for failure in ("missing", "mismatch"):
-                with self.subTest(component=cid, failure=failure), tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
+                with self.subTest(component=cid, failure=failure), tempfile.TemporaryDirectory(dir=build_dir()) as tmp:
                     target = Path(tmp) / cid
                     target.write_bytes(b"existing binary")
                     job = components.make_installer(cid, "1.5.7" if cid == "zstd" else "1.4.0")
@@ -117,7 +118,7 @@ class ChecksumTests(unittest.TestCase):
     def test_components_verified_release_to_install(self):
         for cid, version, output in (("zstd", "1.5.7", "zstd v1.5.7"),
                                      ("par2", "1.4.0", "par2cmdline version 1.4.0")):
-            with self.subTest(component=cid), tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
+            with self.subTest(component=cid), tempfile.TemporaryDirectory(dir=build_dir()) as tmp:
                 spec = components.SOURCE_RECIPES[cid]
                 name = spec["archive"].format(version=version)
                 blob = io.BytesIO()
@@ -155,7 +156,7 @@ class ChecksumTests(unittest.TestCase):
     def test_engine_installer_rejects_before_unpack(self):
         from types import SimpleNamespace
         for failure in ("无法获取校验值", "校验不符，已放弃安装"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(dir=build_dir()) as tmp:
                 engine = SimpleNamespace(zz="existing", version="26.05", source="bundled")
                 job = updates.Installer(engine, "https://www.7-zip.org/a/7z2605-mac.tar.xz", "26.05")
                 with patch.object(updates, "engines_dir", return_value=tmp), \

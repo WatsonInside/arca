@@ -588,6 +588,12 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   `pyobjc-framework-Cocoa`/`WebKit`，而 `bundle` 内嵌运行时自检还会 import
   `Security`/`LocalAuthentication`：全新 venv 会因此失败。`make setup`、README
   与本节安装命令已补齐四个框架（Cocoa/WebKit/Security/LocalAuthentication）。
+- **测试脚本 build 路径统一（2026-11-07 CI 首跑发现）**：多个测试脚本仍把
+  `ROOT/"build"` 当临时目录、测试 app 或夹具根；CI 的干净构建目录里 `build/`
+  是失效符号链接，会出现 `FileNotFoundError`、`cp` 失败或 headless 用例被跳过。
+  现已统一改用 `scripts/_paths.build_dir()`（含 selftest 分卷夹具路径）。同一轮
+  CI 还暴露 fuzz-soak 的 kill 场景竞态：快机器上 7zz 会在 kill 前完成，测试改为
+  逐级加大负载重试，确保真的杀到运行中的进程。
 - 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
   import 副作用/文案），默认套件 32→33。
 - 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长

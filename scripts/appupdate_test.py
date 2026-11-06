@@ -23,11 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'src'))
 from arca import appupdate as a, settings, server
+from _paths import build_dir
 
 
 class Tests(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(dir=ROOT / 'build')
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         self.bundle = self.make_bundle(self.root / 'Arca.app', '1.0.0')
@@ -396,7 +397,7 @@ class DiskCacheTests(unittest.TestCase):
     """T13：磁盘缓存、条件请求 304、repo 隔离、stale 禁止安装。"""
 
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(dir=ROOT / 'build')
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         self.bundle = self.make_bundle(self.root / 'Arca.app', '1.0.0')

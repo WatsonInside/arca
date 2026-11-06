@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from arca import components, updates  # noqa: E402
 from arca.components import ComponentError, InstallJob, Par2, SevenZip, Zstd  # noqa: E402
+from _paths import build_dir
 
 PAGE_HTML = (b'<html><body><a href="download.html">'
              b'Download 7-Zip 26.00 (2026-01-01)</a> '
@@ -158,7 +159,7 @@ class ComponentRemoteTests(unittest.TestCase):
     """T15：缓存/force/draft 过滤/stale 展示。"""
 
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(temp.cleanup)
         self.root = pathlib.Path(temp.name).resolve()
         self.mock = patch.object(components.util, "state_path",
@@ -215,7 +216,7 @@ class InstallSafetyTests(unittest.TestCase):
     """T15：下载上限/截断/原子替换。"""
 
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(temp.cleanup)
         self.root = pathlib.Path(temp.name).resolve()
 

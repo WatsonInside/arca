@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+from _paths import build_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -178,7 +179,7 @@ class Probe:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port-file", type=Path, default=ROOT / "build/port-menu.json")
+    parser.add_argument("--port-file", type=Path, default=build_dir() / "port-menu.json")
     parser.add_argument("--probe-size", type=probe_size, default=probe_size("50GB"))
     args = parser.parse_args()
     probe = None

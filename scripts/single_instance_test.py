@@ -23,7 +23,8 @@ import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUILD = os.path.join(ROOT, "build")
+from _paths import build_dir
+BUILD = str(build_dir())
 APP = os.path.join(BUILD, "Arca-test.app", "Contents", "MacOS", "Arca")
 STATE = os.path.join("Library", "Application Support", "Arca")
 

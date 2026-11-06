@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "src"))
 from arca import engine, server
+from _paths import build_dir
 
 HINT = ("ZIP 格式暂不支持含中文等非 ASCII 字符的密码，"
         "请改用 7z 格式（同时会加密文件名，更安全）")
@@ -27,7 +28,7 @@ class ZipPasswordTests(unittest.TestCase):
         warning_scope.__enter__()
         self.addCleanup(warning_scope.__exit__, None, None, None)
         warnings.simplefilter("ignore", ResourceWarning)
-        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build")
+        self.tmp = tempfile.TemporaryDirectory(dir=build_dir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.source = self.root / "input.txt"

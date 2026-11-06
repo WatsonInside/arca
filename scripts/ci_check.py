@@ -7,6 +7,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+from _paths import build_dir
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -59,7 +60,7 @@ def local_preflight() -> list[dict]:
         "node": shutil.which("node"),
         "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "7zz(bundle)": str(ROOT / "vendor/7zz"),
-        "runtime": str(ROOT / "build" / "python-runtime"),
+        "runtime": str(build_dir() / "python-runtime"),
     }
     results = []
     for name, path in tools.items():

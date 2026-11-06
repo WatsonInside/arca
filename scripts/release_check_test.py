@@ -19,10 +19,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from arca import util  # noqa: E402
 import release_check as rc  # noqa: E402
+from _paths import build_dir
 
 
 def _tmp_root() -> pathlib.Path:
-    return pathlib.Path(tempfile.mkdtemp(prefix="release-check-", dir=ROOT / "build"))
+    return pathlib.Path(tempfile.mkdtemp(prefix="release-check-", dir=build_dir()))
 
 
 def make_app(root: pathlib.Path, version: str | None = None) -> pathlib.Path:
