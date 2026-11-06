@@ -308,7 +308,7 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
         command = PY + ["-c", bootstrap, str(app_source), str(old), str(port)]
     else:
         bootstrap = (
-            "import sys,json,signal;print('headless: start',flush=True);"
+            "import sys,json,signal,time;print('headless: start',flush=True);"
             "sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
             "from update_fixtures import upstream;fixture=upstream(sys.argv[4]);fixture.__enter__();"
             "print('headless: fixture ready',flush=True);"
@@ -322,7 +322,11 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
             "service=server.Server(ctx);print('headless: server built',flush=True);"
             "service.start();print('headless: server started',flush=True);"
             "open(sys.argv[3],'w').write(json.dumps({'port':service.port,'token':ctx.token}));"
-            "print('Bundled 26.05 server with controlled '+sys.argv[4]+' upstream fixture',flush=True);signal.pause()"
+            "print('Bundled 26.05 server with controlled '+sys.argv[4]+' upstream fixture',flush=True);"
+            "_term=lambda s,f:(print('headless: signal',s,flush=True),sys.exit(0));"
+            "signal.signal(signal.SIGTERM,_term);signal.signal(signal.SIGINT,_term);"
+            "signal.signal(signal.SIGHUP,_term);"
+            "\nwhile True:time.sleep(1)"
         )
         command = PY + ["-c", bootstrap, str(app_source), str(ROOT / "scripts"), str(port), fixture]
     with tempfile.TemporaryFile(mode="w+") as output:

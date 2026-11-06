@@ -595,6 +595,25 @@ def main():
               str(sorted(exported)))
         check("导出类型声明了扩展名", {"rar", "zst"} <= tags, str(sorted(tags)))
         dyn = [t["ext"] for t in st["types"] if t["uti"].startswith("dyn.")]
+        if dyn:
+            # 全新机器/首次构建：LaunchServices 还没索引 release/Arca.app 导出的
+            # 类型，.rar/.zst 会先落在 dyn.*；注册一次后应解析为自有类型。
+            lsregister = (
+                "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+                "LaunchServices.framework/Support/lsregister")
+            if os.path.exists(lsregister):
+                subprocess.run([lsregister, "-f",
+                                os.path.join(ROOT, "release", "Arca.app")],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=30,
+                               check=False)
+                for _ in range(30):
+                    st = cli.get("/api/integration/status")
+                    dyn = [t["ext"] for t in st["types"]
+                           if t["uti"].startswith("dyn.")]
+                    if not dyn:
+                        break
+                    time.sleep(0.2)
         check("没有扩展名停留在动态类型", not dyn, f"dyn: {dyn}")
     else:
         skip("bundle Info.plist 检查", "release/Arca.app 不存在")

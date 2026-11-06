@@ -244,8 +244,13 @@ class AppInstance:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
+                try:
+                    self._log.flush()
+                    tail = self.log_path.read_text(errors="replace")[-1500:]
+                except OSError:
+                    tail = ""
                 raise RuntimeError(f"headless 实例 {self.label} 提前退出 "
-                                   f"rc={self.proc.returncode}")
+                                   f"rc={self.proc.returncode}\n{tail}")
             try:
                 data = json.loads(self.port_file.read_text())
             except (FileNotFoundError, ValueError, OSError):

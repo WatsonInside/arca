@@ -20,11 +20,12 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import cdp  # noqa: E402
+from _paths import build_dir as _build_dir  # noqa: E402
 import jobwait  # noqa: E402
 
 PASS, FAIL = [], []
 Z = os.path.join(ROOT, "vendor", "7zz")
-DEMO = os.path.join(ROOT, "build", "menu-demo")
+DEMO = os.path.join(str(_build_dir()), "menu-demo")
 
 
 def check(name, cond, detail=""):
@@ -279,7 +280,7 @@ def main():
     # 每轮独立临时目录：共享的 build/menu-demo 会把上一轮产物带进下一轮
     # （名字冲突触发唯一化、6GB 无限累积）。收尾只在确认回收后进行；
     # 未回收或回收检查异常时保留现场，并让测试以非零退出。
-    build_dir = os.path.join(ROOT, "build")
+    build_dir = str(_build_dir())
     os.makedirs(build_dir, exist_ok=True)
     DEMO = tempfile.mkdtemp(prefix="menu-demo-", dir=build_dir)
     profile = os.path.join(build_dir, f"chrome-menu-{int(time.time())}")
@@ -308,7 +309,7 @@ def main():
 
 def _run(profile, state):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port-file", default=os.path.join(ROOT, "build", "port-menu.json"))
+    parser.add_argument("--port-file", default=os.path.join(str(_build_dir()), "port-menu.json"))
     args = parser.parse_args()
     with open(args.port_file) as handle:
         ports = json.load(handle)
