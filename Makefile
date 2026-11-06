@@ -29,7 +29,7 @@ thirdparty:
 	$(PY) scripts/build_thirdparty.py
 
 bundle:
-	ARCA_PYTHON=$(ARCA_BUILD_DIR)/python-runtime ARCA_OUT=$$PWD/release/Arca.app $(PY) scripts/bundle.py
+	ARCA_PYTHON=$${ARCA_PYTHON:-$(ARCA_BUILD_DIR)/python-runtime} ARCA_OUT=$$PWD/release/Arca.app $(PY) scripts/bundle.py
 
 package:
 	$(PY) scripts/package.py

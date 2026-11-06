@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: 选择嵌入式 Python 运行时
+        run: echo "ARCA_PYTHON=$(python3 -c 'import sys; print(sys.base_prefix)')" >> "$GITHUB_ENV"
       - name: 准备构建目录与 runtime
         run: |
           make setup
@@ -65,6 +67,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: 选择嵌入式 Python 运行时
+        run: echo "ARCA_PYTHON=$(python3 -c 'import sys; print(sys.base_prefix)')" >> "$GITHUB_ENV"
       - name: 检查 Chrome（UI/headless 套件需要）
         run: |
           test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

@@ -576,6 +576,13 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   无 secrets 引用、job 的 runs-on/timeout、nightly 未预启用，并检查本机
   python/node/Chrome/7zz/runtime。**CI 远端从未运行，状态为“未验证”**；
   本地只验证了工作流结构与命令可执行。
+- **干净环境运行时引导（2026-11-07 补）**：`<构建目录>/python-runtime` 是历史手工
+  产物（从已构建的 app 复制），不随仓库分发，因此全新 checkout 直接 `make bundle`
+  会失败。`Makefile` 的 bundle 目标改为 `ARCA_PYTHON=$${ARCA_PYTHON:-<构建目录>/python-runtime}`
+  （环境或 make 变量覆盖均可），workflow 在构建前把 `ARCA_PYTHON` 指向 setup-python 的安装前缀（`sys.base_prefix`），
+  quick/full 均适用。本机用干净 `ARCA_BUILD_DIR` 完整模拟 quick（setup → thirdparty →
+  bundle → `make test-fast` → components/checksum/zip-inspect）已跑通，并验证
+  `ARCA_OUT` 产物可构建；真实 GitHub runner 仍待首跑记录。
 - 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
   import 副作用/文案），默认套件 32→33。
 - 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长
