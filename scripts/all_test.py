@@ -280,17 +280,43 @@ def sync_bundle(runner):
         lines.append(f"{relative} SHA256 {digest} identical")
     for path in target.rglob("*.pyc"):
         path.unlink()
+    rel_dylib = ROOT / "release/Arca.app/Contents/Resources/python/lib/libpython3.13.dylib"
+    test_dylib = bundle / "Contents/Resources/python/lib/libpython3.13.dylib"
+    if rel_dylib.is_file() and test_dylib.is_file():
+        same = (hashlib.sha256(rel_dylib.read_bytes()).hexdigest() ==
+                hashlib.sha256(test_dylib.read_bytes()).hexdigest())
+        lines.append("dylib copy-identical: %s" % same)
     codesign = shutil.which("codesign")
     if codesign:
+        nested = [
+            bundle / "Contents/MacOS/Arca",
+            bundle / "Contents/Resources/python/bin/python3.13",
+            bundle / "Contents/Resources/python/lib/libpython3.13.dylib",
+        ]
+        for item in nested:
+            if not item.is_file():
+                lines.append(f"codesign nested: {item.name} missing")
+                continue
+            before = subprocess.run([codesign, "--verify", "--verbose=2", str(item)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            r = subprocess.run([codesign, "--force", "--sign", "-", str(item)],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            info = subprocess.run([codesign, "-dv", str(item)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            blob = " ".join(info.stdout.decode("utf-8", "replace").split())[:120]
+            lines.append("codesign nested: %s verify-before=%d sign=%d [%s]" % (
+                item.name, before.returncode, r.returncode, blob))
         signed = subprocess.run(
             [codesign, "--force", "--deep", "--sign", "-", str(bundle)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        note = ("ad-hoc codesign ok" if signed.returncode == 0 else
-                "ad-hoc codesign failed: " +
-                signed.stdout.decode("utf-8", "replace")[-400:])
+        dylib = bundle / "Contents/Resources/python/lib/libpython3.13.dylib"
+        verify = subprocess.run([codesign, "--verify", "--verbose=2", str(dylib)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        lines.append("codesign: bundle rc=%d verify-dylib rc=%d %s" % (
+            signed.returncode, verify.returncode,
+            verify.stdout.decode("utf-8", "replace").strip()[-200:]))
     else:
-        note = "codesign unavailable; existing signatures kept"
-    lines.append(f"codesign: {note}")
+        lines.append("codesign: unavailable; existing signatures kept")
     runner.log("sync", "\n".join(lines) + f"\nTest bundle synchronized: {len(lines)} source/web files, SHA256 identical; bundled pyc removed\nEXIT: 0\n")
     return launcher, target.parent
 

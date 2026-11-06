@@ -285,6 +285,21 @@ def normalize_modes():
     os.chmod(BUNDLE, 0o755)
 
 
+def resign_runtime(contents):
+    codesign = shutil.which("codesign")
+    if not codesign:
+        log("  codesign unavailable; keep original runtime signatures")
+        return
+    for rel in ("Resources/python/bin/python3.13",
+                "Resources/python/lib/libpython3.13.dylib"):
+        target = os.path.join(contents, rel)
+        if not os.path.exists(target):
+            continue
+        r = subprocess.run([codesign, "--force", "--sign", "-", target],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        log("  codesign %s rc=%d" % (rel, r.returncode))
+
+
 def smoke_test():
     exe = os.path.join(BUNDLE, "Contents", "MacOS", APP)
     py = os.path.join(BUNDLE, "Contents", "Resources", "python", "bin", "python3.13")
@@ -308,6 +323,7 @@ def main():
     build_app_sources(contents)
     build_launcher(contents)
     normalize_modes()
+    resign_runtime(contents)
     exe = smoke_test()
     size = subprocess.run(["du", "-sh", BUNDLE], stdout=subprocess.PIPE).stdout.decode().split()[0]
     n = sum(len(f) for _r, _d, f in os.walk(BUNDLE))

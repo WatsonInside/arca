@@ -1106,7 +1106,12 @@ def _run(profile, state):
         check("设置面板一屏可见", fits is True,
               ui.js("""(() => {
                 const b = document.querySelector('.sheet-body');
-                return b ? `${b.scrollHeight} vs ${b.clientHeight}` : 'no body';
+                if (!b) return 'no body';
+                const secs = [...b.querySelectorAll('.sheet-section')]
+                  .map(s => Math.round(s.getBoundingClientRect().height));
+                const kids = [...b.children]
+                  .map(s => `${s.className}:${Math.round(s.getBoundingClientRect().height)}`);
+                return `${b.scrollHeight} vs ${b.clientHeight} vp=${innerWidth}x${innerHeight} dpr=${devicePixelRatio} sections=${secs.join(',')} kids=${kids.join('|')}`;
               })()"""))
         check("低频项收进折叠组",
               ui.js("document.querySelectorAll('.sheet-fold').length") >= 2,
