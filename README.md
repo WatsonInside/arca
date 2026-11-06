@@ -52,7 +52,7 @@ shasum -a 256 ~/Downloads/Arca-1.2.0.dmg
 **方式二 · 从源码构建**
 
 ```bash
-python3 -m venv build/venv && build/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
+python3 -m venv build/venv && build/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit pyobjc-framework-Security pyobjc-framework-LocalAuthentication
 build/venv/bin/python scripts/build_thirdparty.py   # 编译 zstd / par2（universal）
 build/venv/bin/python scripts/bundle.py             # 组装 release/Arca.app
 build/venv/bin/python scripts/package.py            # 生成 dist/*.dmg 与 *.pkg

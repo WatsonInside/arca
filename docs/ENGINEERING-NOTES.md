@@ -583,7 +583,11 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   quick/full 均适用。真实首跑前还发现 `macos-14` 在当前账户被判定为不受支持
   （`macos-14-arm64-us-default`），workflow 已改用 runner 标签 `macos-15`。本机用干净 `ARCA_BUILD_DIR` 完整模拟 quick（setup → thirdparty →
   bundle → `make test-fast` → components/checksum/zip-inspect）已跑通，并验证
-  `ARCA_OUT` 产物可构建；真实 GitHub runner 仍待首跑记录。
+  `ARCA_OUT` 产物可构建；真实 GitHub runner 首跑记录见 `build/ci-first-run.md`。
+- **pyobjc 框架安装补齐（2026-11-07 CI 首跑发现）**：`make setup` 原先只装
+  `pyobjc-framework-Cocoa`/`WebKit`，而 `bundle` 内嵌运行时自检还会 import
+  `Security`/`LocalAuthentication`：全新 venv 会因此失败。`make setup`、README
+  与本节安装命令已补齐四个框架（Cocoa/WebKit/Security/LocalAuthentication）。
 - 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
   import 副作用/文案），默认套件 32→33。
 - 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长
@@ -820,7 +824,7 @@ Arca 因此做了两层：
 ## 从源码重建
 
 ```bash
-python3 -m venv build/venv && build/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
+python3 -m venv build/venv && build/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit pyobjc-framework-Security pyobjc-framework-LocalAuthentication
 build/venv/bin/python scripts/build_thirdparty.py # 从上游 tag 编译 vendor/zstd 与 vendor/par2（universal）
 build/venv/bin/python scripts/bundle.py      # 组装 release/Arca.app（或 ARCA_OUT=... 指定输出）
 build/venv/bin/python scripts/package.py     # 生成 dist/Arca-1.0.0.dmg 与 .pkg

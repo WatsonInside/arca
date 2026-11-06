@@ -23,7 +23,8 @@ brief:
 
 setup:
 	python3 -m venv $(ARCA_BUILD_DIR)/venv
-	$(ARCA_BUILD_DIR)/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
+	$(ARCA_BUILD_DIR)/venv/bin/pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit \
+		pyobjc-framework-Security pyobjc-framework-LocalAuthentication
 
 thirdparty:
 	$(PY) scripts/build_thirdparty.py
