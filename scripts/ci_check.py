@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""本地校验 CI 骨架（T08）：只读 YAML 结构 + 本机工具前置。"""
+"""本地校验 CI 骨架（T08）：只读 YAML 结构 + 本机工具前置。
+
+本工具完全离线：不查询、也不断言 GitHub Actions 的远端运行状态；远端证据以
+文档记录的 run ID 为准（full 42284502991、quick 42287171456，见 AGENTS.md 与
+docs/ENGINEERING-NOTES.md 的 T08 段）。local_preflight() 只检查本机能否执行
+workflow 中的命令（python3/node/Chrome/7zz/runtime 是否存在），不代表远端跑过。
+"""
 from __future__ import annotations
 
 import json
@@ -16,7 +22,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 def _yaml(path: pathlib.Path) -> dict:
     ruby = shutil.which("ruby")
     if not ruby:
-        raise RuntimeError("未找到 ruby，无法离线解析 YAML（标记为未验证）")
+        raise RuntimeError("未找到 ruby，无法离线解析 YAML")
     code = ('require "yaml"; require "json"; '
             'puts JSON.generate(YAML.load_file(ARGV[0]))')
     out = subprocess.run([ruby, "-ryaml", "-rjson", "-e", code, str(path)],
@@ -55,6 +61,7 @@ def check_workflow(path: pathlib.Path) -> list[dict]:
 
 
 def local_preflight() -> list[dict]:
+    """本机前置检查；刻意不包含任何远端 CI 状态探测或断言。"""
     tools = {
         "python3": shutil.which("python3"),
         "node": shutil.which("node"),
@@ -68,8 +75,6 @@ def local_preflight() -> list[dict]:
         ok = bool(path) and os.path.exists(path)
         results.append({"check": f"preflight:{name}", "status": "PASS" if ok else "WARN",
                         "detail": str(path or "未找到")})
-    results.append({"check": "preflight:工作流未在远端运行", "status": "WARN",
-                    "detail": "本仓库未 push，CI 远端执行标记为未验证"})
     return results
 
 
