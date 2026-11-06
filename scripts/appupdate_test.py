@@ -12,6 +12,12 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+import warnings
+
+# P2 回归（复核）：本套件曾因 relaunch 子进程未被 wait 回收，在 GC 时抛出
+# "ResourceWarning: subprocess ... is still running"。把 ResourceWarning 提升为
+# 错误，防止测试进程回收再次退回。
+warnings.filterwarnings('error', category=ResourceWarning)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
@@ -352,11 +358,21 @@ class Tests(unittest.TestCase):
         import threading
         threading.Thread(target=victim.wait, daemon=True).start()
         script = a.relaunch_script(victim.pid, bundle, log)
-        subprocess.Popen(['/bin/sh', '-c', script], start_new_session=True)
-        deadline = time.time() + 20
-        while time.time() < deadline and not marker.exists():
-            time.sleep(.2)
-        self.assertTrue(marker.exists(), log.read_text() if log.exists() else 'no log')
+        child = subprocess.Popen(['/bin/sh', '-c', script], start_new_session=True,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.time() + 20
+            while time.time() < deadline and not marker.exists():
+                time.sleep(.2)
+            self.assertTrue(marker.exists(), log.read_text() if log.exists() else 'no log')
+            # The relaunch shell execs the fake binary and exits; reap it so the
+            # test never emits ResourceWarning or leaves a child behind.
+            self.assertEqual(child.wait(timeout=20), 0)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
         self.assertIn('oldpid=', log.read_text())
 
     def test_orphan_backup_is_swept_only_when_stale(self):
