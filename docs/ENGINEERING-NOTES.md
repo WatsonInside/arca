@@ -492,8 +492,10 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   worker 收尾并清 journal。UI 关最后窗口/Cmd-Q 与 headless SIGTERM/SIGINT
   走同一入口；语义契约见 [`CANCEL-ROLLBACK.md`](CANCEL-ROLLBACK.md)。
 - 已知边界：活动任务退出时不做“等待/取消”询问，直接取消并退出（有界 8s）；
-  Cmd-Q 人工 E2E 未执行；zstd 的 tar 流取消状态以任务旗标为准，异常文案可能
-  是 ReadError 而非“已取消”。
+  Cmd-Q E2E 已于 2026-11-07 本地执行（真实 GUI + 运行中 zstd 任务，⌘Q 后
+  1.51 s 退出、无子进程残留、重启无 interrupted，证据
+  `build/t02-cmdq-evidence.json`）；仍未验证：系统级断电、“关最后窗口”场景；
+  zstd 的 tar 流取消状态以任务旗标为准，异常文案可能是 ReadError 而非“已取消”。
 
 ### App 自更新两阶段就绪（T05，2026-10-29）
 
@@ -516,7 +518,7 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   删除或报错。
 - 已知边界：ui-ready 是页面自报（有 token 保护，但不防本机恶意进程）；"页面
   存在但 JS 语法错误" 会落到超时分支（保守保留旧包）；超时后标记仍在，下次
-  正常启动会再次等待页面确认；真实 Cmd-Q/窗口创建失败场景未做人工 E2E。
+  正常启动会再次等待页面确认；窗口创建失败场景未做人工 E2E（Cmd-Q 已补验，证据见 `build/t02-cmdq-evidence.json`）。
 - 测试：`scripts/appupdate_test.py` 新增 `ConfirmUpdateTests`（headless 不清理、
   超时保留、就绪确认、无标记不动作、无 updater 不动作），并把
   `test_http_server_cached_apply_end_to_end` 改为真实 POST ui-ready 后等待

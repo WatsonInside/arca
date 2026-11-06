@@ -54,8 +54,9 @@ class Job:
         # Kept in the crash journal so an interrupted run can name its output
         # without guessing from the (possibly missing) final outputs.
         self.planned = extra.get("planned", "")
-        # fresh vs merge is decided by the running extract task; the UI reads it
-        # to word cancel/retry hints with the real cleanup contract.
+        # fresh vs merge is decided by the running extract task; the server also
+        # pre-fills it when the job is created (dest existence) so queued jobs
+        # already word cancel/retry hints with the real cleanup contract.
         self.mode = extra.get("mode", "")
         # 可重试的安全参数（白名单，绝不含密码）：只用于中断任务的"预填重开"，
         # 不进入 to_dict()/UI，也不参与自动执行。

@@ -9,6 +9,8 @@ Covered regressions:
   * accepted /api/compress clears the submitted draft (no old "待压缩" rows);
   * failed submit keeps the current draft and explicit choices;
   * cancel -> cancelled, cancel card collapses, recent list includes it;
+  * T02: cancel hint copy matches real cleanup for compress and for fresh/merge
+    extract (queued jobs), retry hint copy, retry prefill does not auto-submit;
   * cancelled task can be retried from the queue: exactly one follow-up job,
     original request payload reused, target-change hint shown;
   * after cancelling A, dropping B never mixes A inputs or A directory;
@@ -31,6 +33,7 @@ import tempfile
 import time
 import traceback
 import urllib.request
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -41,6 +44,15 @@ from _paths import build_dir
 
 TERMINAL = ("done", "error", "cancelled")
 ZSTD_LEVEL = 5
+COMPRESS_CANCEL_HINT = ("取消任务（本次未完成的归档/分卷会被清理；不会删除既有文件；"
+                        "重试会重新压缩，目标同名文件可能被覆盖）")
+FRESH_CANCEL_HINT = "取消任务（已解出的文件会保留；重试会合并到目标目录，不删除原有文件）"
+MERGE_CANCEL_HINT = ("取消任务（已解出的文件会保留；重试仍会合并，"
+                     "同名文件可能被覆盖，无法撤销）")
+FRESH_RETRY_HINT = ("重试这个任务（目标已存在时合并，不删除原有文件；"
+                    "只预填原参数，确认后再开始，不会自动排队）")
+MERGE_RETRY_HINT = ("重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销；"
+                    "只预填原参数，确认后再开始，不会自动排队）")
 
 NATIVE_SHIM = r"""
 window.__nextDest = '';
@@ -283,8 +295,8 @@ class Harness:
 def build_fixtures(root: Path):
     dirs = {}
     for name in ("A_dir", "B_dir", "C_dir", "C2_dir", "D_dir", "E_dir",
-                 "F_dir", "G_dir", "Old_dir", "New_dir", "OldDest_dir",
-                 "NewDest_dir", "OldPre_dir", "NewPre_dir"):
+                 "F_dir", "G_dir", "H_dir", "I_dir", "Old_dir", "New_dir",
+                 "OldDest_dir", "NewDest_dir", "OldPre_dir", "NewPre_dir"):
         path = root / name
         path.mkdir(parents=True)
         dirs[name] = path
@@ -308,6 +320,17 @@ def build_fixtures(root: Path):
                            ("NewPre", "NewPre_dir", "new-pre")):
         files[key] = dirs[sub] / f"{text}.txt"
         files[key].write_text(text + " payload\n", encoding="utf-8")
+    # T02：解压取消文案（fresh = 目标不存在；merge = 目标已存在且有既有文件）
+    files["zip_fresh"] = root / "extract.zip"
+    files["zip_merge"] = root / "extract-merge.zip"
+    for key, payload in (("zip_fresh", "fresh-payload\n"),
+                         ("zip_merge", "merge-payload\n")):
+        with zipfile.ZipFile(files[key], "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("inside.txt", payload)
+            zf.writestr("nested/中文.txt", "中文 " + payload)
+    merge_dest = dirs["H_dir"] / "extract-merge"
+    merge_dest.mkdir()
+    (merge_dest / "keep.txt").write_text("pre-existing keep\n", encoding="utf-8")
     return dirs, files
 
 
@@ -331,6 +354,12 @@ def run(port_file):
         h.ws.call("Page.addScriptToEvaluateOnNewDocument",
                   {"source": NATIVE_SHIM})
         h.page(h.token)
+
+        def hint_of(selector):
+            return h.js(f"""(() => {{
+              const b = document.querySelector({json.dumps(selector)});
+              return b ? {{title: b.title, aria: b.getAttribute('aria-label')}} : null;
+            }})()""")
 
         # ----------------------------------------------- 1. submit clears draft
         h.drop([files["A"]])
@@ -366,6 +395,10 @@ def run(port_file):
         # ---------------------------------- 2. cancel via real queue control
         h.navigate("queue")
         h.wait_js(f"!!document.querySelector('[data-cancel=\"{job_a}\"]')")
+        compress_hint = hint_of(f'[data-cancel="{job_a}"]')
+        check("压缩取消文案与真实清理一致（清理本次未完成归档、不动既有文件）",
+              compress_hint and compress_hint["title"] == COMPRESS_CANCEL_HINT
+              and compress_hint["aria"] == COMPRESS_CANCEL_HINT, str(compress_hint))
         h.click(f'[data-cancel="{job_a}"]')
         cancelled_a = h.wait_job(job_a)
         check("A 后端终态为 cancelled", cancelled_a["status"] == "cancelled",
@@ -718,6 +751,111 @@ def run(port_file):
         h.click("#c-clear")
         h.wait_js("document.querySelectorAll('#c-list .file-row').length === 0")
 
+        # ---- 2c. T02: fresh/merge extract cancel copy, through real Chrome.
+        # Two level-19 compress holders occupy both workers, so the extract
+        # jobs stay queued deterministically and their cancel/retry hints can
+        # be read from the real page without racing a fast extraction.
+        holders = []
+        for index in (1, 2):
+            hold_dir = dirs["H_dir"] / f"hold{index}"
+            hold_dir.mkdir()
+            holder_request = dict(call_a["request"])
+            holder_request["destDir"] = str(hold_dir)
+            holder_request["level"] = 19
+            holder_request["name"] = "hold"
+            status, body = h.api("/compress", holder_request)
+            check(f"holder 压缩任务 {index} 已提交",
+                  status == 200 and (body.get("job") or {}).get("id"),
+                  f"{status} {body}")
+            holders.append(body["job"]["id"])
+        for job_id in holders:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if (h.job(job_id) or {}).get("status") == "running":
+                    break
+                time.sleep(0.05)
+        check("两个 worker 均被占用，后续解压任务会排队",
+              all((h.job(job_id) or {}).get("status") == "running" for job_id in holders),
+              str([(h.job(job_id) or {}).get("status") for job_id in holders]))
+
+        status_f, fresh_body = h.api("/extract", {
+            "path": str(files["zip_fresh"]), "destDir": str(dirs["H_dir"]),
+            "onExists": "fresh", "overwrite": False})
+        status_m, merge_body = h.api("/extract", {
+            "path": str(files["zip_merge"]), "destDir": str(dirs["H_dir"]),
+            "onExists": "merge", "overwrite": False})
+        check("fresh/merge 解压任务已受理",
+              status_f == 200 and status_m == 200
+              and (fresh_body.get("job") or {}).get("id")
+              and (merge_body.get("job") or {}).get("id"),
+              f"{status_f} {fresh_body} / {status_m} {merge_body}")
+        fresh_id = fresh_body["job"]["id"]
+        merge_id = merge_body["job"]["id"]
+        fresh_dest = Path(fresh_body["dest"])
+        check("服务端创建任务时已预填 fresh/merge 模式",
+              fresh_body["job"].get("mode") == "fresh"
+              and merge_body["job"].get("mode") == "merge",
+              f"fresh={fresh_body['job'].get('mode')} merge={merge_body['job'].get('mode')}")
+        for job_id in (fresh_id, merge_id):
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if (h.job(job_id) or {}).get("status") == "queued":
+                    break
+                time.sleep(0.05)
+        check("worker 满时 fresh/merge 解压任务保持 queued",
+              (h.job(fresh_id) or {}).get("status") == "queued"
+              and (h.job(merge_id) or {}).get("status") == "queued",
+              str([(h.job(job_id) or {}).get("status") for job_id in (fresh_id, merge_id)]))
+
+        h.navigate("queue")
+        h.wait_js(f"!!document.querySelector('[data-cancel=\"{merge_id}\"]')")
+        fresh_hint = hint_of(f'[data-cancel="{fresh_id}"]')
+        merge_hint = hint_of(f'[data-cancel="{merge_id}"]')
+        check("fresh 解压取消文案准确（真实 Chrome）",
+              fresh_hint and fresh_hint["title"] == FRESH_CANCEL_HINT
+              and fresh_hint["aria"] == FRESH_CANCEL_HINT, str(fresh_hint))
+        check("merge 解压取消文案说明合并/不可撤销（真实 Chrome）",
+              merge_hint and merge_hint["title"] == MERGE_CANCEL_HINT
+              and merge_hint["aria"] == MERGE_CANCEL_HINT, str(merge_hint))
+
+        h.click(f'[data-cancel="{merge_id}"]')
+        h.wait_job(merge_id)
+        h.wait_js(f"!!document.querySelector('[data-retry=\"{merge_id}\"]')")
+        merge_retry = hint_of(f'[data-retry="{merge_id}"]')
+        check("merge 解压取消后可重试，重试文案说明覆盖边界（真实 Chrome）",
+              merge_retry and merge_retry["title"] == MERGE_RETRY_HINT
+              and merge_retry["aria"] == MERGE_RETRY_HINT, str(merge_retry))
+        keep = dirs["H_dir"] / "extract-merge" / "keep.txt"
+        check("merge 取消不删除既有文件",
+              keep.is_file() and keep.read_text(encoding="utf-8") == "pre-existing keep\n",
+              "keep.txt 丢失或被改写")
+
+        h.api("/job/cancel", {"id": fresh_id})
+        h.wait_job(fresh_id)
+        h.wait_js(f"!!document.querySelector('[data-retry=\"{fresh_id}\"]')")
+        fresh_retry = hint_of(f'[data-retry="{fresh_id}"]')
+        check("fresh 解压取消后可重试，重试文案说明合并而非删除（真实 Chrome）",
+              fresh_retry and fresh_retry["title"] == FRESH_RETRY_HINT
+              and fresh_retry["aria"] == FRESH_RETRY_HINT, str(fresh_retry))
+        check("fresh 解压未开始即取消，不创建目标目录",
+              not fresh_dest.exists(), str(fresh_dest))
+
+        before_retry_ids = set(h.js("window.__queueIds()") or [])
+        h.js(f"""(() => {{
+          document.querySelector('[data-retry="{merge_id}"]').click();
+          return true;
+        }})()""")
+        h.wait_js("(document.querySelector('#toasts')?.textContent || '').includes('已按上次参数预填')")
+        time.sleep(0.5)
+        after_retry_ids = set(h.js("window.__queueIds()") or [])
+        check("解压取消任务的重试只预填、不自动提交",
+              after_retry_ids == before_retry_ids,
+              str(sorted(after_retry_ids - before_retry_ids)))
+
+        for job_id in holders:
+            h.api("/job/cancel", {"id": job_id})
+        for job_id in holders:
+            h.wait_job(job_id)
         return not check.failed
     finally:
         try:

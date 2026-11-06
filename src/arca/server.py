@@ -867,6 +867,7 @@ class Handler(BaseHTTPRequestHandler):
             label = "解压 " + os.path.basename(entry)
             job = jobs_mod.Job("extract", label, subtitle=os.path.basename(dest),
                                srcPath=entry, destPath=dest, planned=dest,
+                               mode=("merge" if os.path.isdir(dest) else "fresh"),
                                secrets=[password], bucket=dest_root, total=total,
                                format=(info.get("label") or ""),
                                request=jobs_mod.safe_request("extract", body))
