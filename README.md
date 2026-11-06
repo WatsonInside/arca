@@ -136,20 +136,21 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 
 | 套件 | 覆盖 |
 | --- | --- |
-| integrity 97 / selftest 39 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
+| integrity 97 / selftest 58 | 引擎与组件、zstd / PAR2 全链路、Finder 集成 |
 | menu 103 / acceptance 22 | 真实 UI 交互（CDP 驱动）、HTTP 行为探针 |
 | keyring 53 / appupdate 41 | 钥匙串与触控 ID、应用自更新（磁盘缓存/304/stale） |
 | components 15 | 7-Zip 双源与组件更新安全（T14/T15） |
 | release-check 10 | 只读发布预检（资产/摘要/tar 安全/签名状态/测试 provenance） |
 | stats 21 | 匿名统计客户端状态机与日志聚合口径 |
-| update 25 / update-long 27 | 引擎更新：检查、跳过、稍后、安装（含真实下载） |
-| partial-extract 35 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |
+| update 38 / update-long 40 | 引擎更新全流程（默认受控 fixture；真实安装下载仅显式 `--full-update`） |
+| partial-extract 37 / fuzz-soak 6 | 选择性解压与异常回滚、损坏/截断/穿越/低磁盘冒烟 |
 | overwrite-txn 11 | 覆盖压缩的可恢复替换：staging、同卷 rename、崩溃前滚、PAR2 best-effort |
 | single-instance 5 | 同 HOME 单实例锁：第二实例拒绝、不同 HOME 隔离、并发启动唯一胜者 |
 | retry-plan 8 | 中断任务预填重开：安全参数白名单、journal v2 恢复、源/条目缺失契约 |
-| interrupt-recovery 4 | 崩溃/中断后的状态、任务日志与回滚边界（真实 .app + 隔离 HOME） |
+| interrupt-recovery 5 | 崩溃/中断后的状态、任务日志与回滚边界（真实 .app + 隔离 HOME） |
 | jobwait 7 / menu-cleanup 9 | 任务等待时序、测试收尾策略 |
-| compress-draft | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
+| shutdown 10 / extract-safety 10 | 取消/退出子进程有界收尾、解压写入边界与危险条目拒绝 |
+| compress-draft 39 | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
 
 ```
 Arca.app/Contents/
@@ -174,7 +175,8 @@ Arca.app/Contents/
 3. **`.tar.zst` 不支持加密与分卷**：zstd 是流格式，需要保密或分卷请用 7Z / ZIP。
 4. **组件更新需要本机编译器**（Xcode Command Line Tools）：zstd 与 par2 在本机编译安装。
 5. **崩溃/中断不自动续传**：重开会把上次未完成的任务标成「中断」并说明产物可能不完整，
-   半成品保留；没有一键重试，需要时请重新发起。
+   半成品保留；不做自动续传/自动重放，但 R5a 起支持**预填重开**——点「重试」只把
+   安全参数填回压缩页/解压预览，需用户确认后提交，加密任务需重新输入密码。
 
 ---
 

@@ -1,8 +1,8 @@
 # 取消 / 回滚 / 清理归属契约（T00）
 
-状态：R2 定稿（2026-10-29），供 T01 / T04a / T06 依赖。实现状态见文末
-「落地情况」；本文件定义的是**契约**，代码尚未做到的部分不得在 UI 文案或
-README 里宣称已实现。
+状态：R2 定稿（2026-10-29），R5a 修订（2026-10-29，T06/T10/T12-lite 落地后）。
+实现状态见文末「落地情况」；本文件定义的是**契约**，代码尚未做到的部分不得在
+UI 文案或 README 里宣称已实现。
 
 ## 1. 任务状态与允许操作
 
@@ -13,15 +13,16 @@ README 里宣称已实现。
 | `cancelled` | 用户取消且已收尾（含子进程回收） | 重试、移除 | 内存；进 history 仅 `done` |
 | `error` | 任务失败且未取消 | 重试、移除 | 同上 |
 | `done` | 成功完成并写入 history | 移除 | 内存 + history |
-| `interrupted` | 上次进程非正常退出遗留的任务记录 | 只读展示（不可重试，见 T10） | history（启动时写入） |
+| `interrupted` | 上次进程非正常退出遗留的任务记录 | 重试（预填重开，需用户确认；见 §10） | history（启动时写入） |
 
 - `cancelling` 是 `running` 的**瞬时阶段**（`phase="正在取消…"`），不是独立
   status：避免 UI、history 和 journal 三处状态机分叉。若将来需要独立
   status，必须先统一这三处。
 - 取消是幂等的；对已终态任务返回 `False`，不报错、不改变产物。
 - 冷启动时 `pending-jobs/*.json` 只用于生成 `interrupted` 记录，**绝不自动
-  重放**。重试只能由用户主动点击触发，且只在本进程 `ctx.requests` 仍持有
-  原始参数时可用（应用重启后该参数丢失，UI 提示“重试信息已失效”）。
+  重放**。重试只能由用户主动点击触发：R5a 起可从 journal schema 2 的安全
+  参数预填（见 §10），用户确认并补齐密码后才提交；参数缺失或不可判定时
+  给出明确提示，不猜测、不排队。
 
 ## 2. 取消发生在什么时候，产物归谁
 
@@ -83,8 +84,9 @@ README 里宣称已实现。
   文本。写入 best-effort（T03：原子写 + 失败可见降级）。
 - 单实例锁（T12-lite）在共享状态初始化前获取；第二实例只提示后退出，不做
   请求转发。不同 HOME 互不阻塞。
-- UI 重试只对 `error`/`cancelled` 可见，payload 来自本进程 `ctx.requests`；
-  journal 不提供自动重试入口。
+- UI 重试只对 `error`/`cancelled`/可重开的 `interrupted` 可见：`error`/
+  `cancelled` 在本进程仍持有 `ctx.requests` 时直接复用；`interrupted` 走
+  `retry-requests` 预填计划（见 §10）。journal 不提供自动重试入口。
 
 ## 7. PAR2 默认 best-effort（已由用户批准）
 
@@ -100,27 +102,30 @@ README 里宣称已实现。
 | --- | --- |
 | UI 关最后窗口 / Cmd-Q | 走 `applicationShouldTerminate_` → 取消活动任务、有界 drain、回收子进程后退出（R2 落地；无交互询问，见文末差距） |
 | headless SIGTERM/SIGINT | 与 UI 一致：调用同一个 `JobManager.shutdown()` 后返回 |
-| 取消后正常退出 | cancelled 任务 journal 删除；history 只收 `done` |
+| 取消后正常退出 | cancelled 任务 journal 删除；history 只收 `done`（中断记录由启动恢复单独写入） |
 | 进程崩溃 | 下次启动把残留 journal 转成 `interrupted` history，保留产物，不重放 |
-| 重启后重试 | 原始参数已丢失：提示“重试信息已失效”，只能重新拖入/选择 |
+| 重启后重试 | R5a 起优先从 `state/retry-requests/<id>.json` 预填（密码需重新输入）；参数缺失/旧 schema 明确提示且不自动重放，其余情况提示“重试信息已失效” |
 
-## 落地情况（R2）
+## 落地情况（截至 R5a，2026-10-29）
 
 - ✅ §1 状态机、§2 取消归属、§3 fresh/merge 文案与重试、§4 进程注册/回收、
-  §6 journal 语义、§8 信号与关窗收尾。
-- ✅ T01 回归：`scripts/shutdown_test.py` 8 项（queued 立即取消、running
+  §6 journal 语义、§8 信号与关窗收尾（R2 落地；后续轮次加固）。
+- ✅ T01 回归：`scripts/shutdown_test.py` 10 项（queued 立即取消、running
   terminate/kill/reap、忽略 SIGTERM 升级、管道解除阻塞、shutdown 拒绝新任务、
   queued 不执行、幂等、无关进程不受影响）+ `interrupt-recovery` 的运行中
   SIGTERM 场景（有界退出、无孤儿、journal 清理、重启无 interrupted 记录）。
-- ⏳ §5 的文件集合替换/备份由 T06 实现；目前仍是“直接写目标 + 压缩清理未完成
-  归档、解压保留半成品”。
-- ⏳ §6 单实例锁由 T12-lite 实现。
-- ⏳ §8 活动任务的“等待/取消并退出/继续工作”交互选择尚未做：R2 当前行为
-  是**取消活动任务后退出**（有界 8 秒），且未做 GUI 关闭窗口的人工 E2E。
-- T01 的 7zz/par2 静默子进程与取消时延有单元回归；真实 app 的 Cmd-Q 人工
-  验收尚未执行。
+- ✅ §5 的文件集合替换/备份已由 T06 落地（`overwrite-txn` 11 项：staging、
+  同卷 rename、切换前回读校验、崩溃前滚、PAR2 best-effort，见 R4）。
+- ✅ §6 单实例锁已由 T12-lite 落地（`single-instance` 5 项：同 HOME 第二实例
+  退出 3、不同 HOME 隔离、退出后释放、锁文件 0600、并发启动唯一胜者，见 R5a）。
+- ✅ §1/§8 重启后重试已由 T10 落地（`retry-plan` 8 项，见 §10）：安全参数预填、
+  用户确认后提交、密码重新输入，不自动排队/重放。
+- ⏳ §8 活动任务的“等待/取消并退出/继续工作”交互选择尚未做：当前行为仍是
+  **取消活动任务后退出**（有界 8 秒）；真实 GUI Cmd-Q/关窗的人工 E2E 尚未执行。
+- 历史说明：R2 定稿时 T06/T10/T12-lite 尚未实现，故契约先行；本文件已按后续
+  轮次更新为已落地，历史轮次报告保留当时口径、不追改。
 
-## 7. 单实例边界（T12-lite，2026-10-29）
+## 9. 单实例边界（T12-lite，2026-10-29）
 
 同一 App Support 目录（默认 `~/Library/Application Support/Arca`，可用
 `ARCA_HOME` 替换主目录）只允许一个 Arca 进程持有 `instance.lock` 上的
@@ -132,7 +137,7 @@ README 里宣称已实现。
 - 不做请求转交、不做跨用户锁；`open -n` 依赖 LaunchServices 与锁两层防护。
 - 锁文件为 0600，内容为 `pid=<n> home=<路径>`，退出（含异常退出）由内核释放。
 
-## 8. 中断任务预填重开边界（T10，2026-10-29）
+## 10. 中断任务预填重开边界（T10，2026-10-29）
 
 崩溃或强退后，journal（schema 2）中的安全参数会被转存到
 `retry-requests/<id>.json` 并在 history 标记 `retryable`；旧 schema 不猜测。
