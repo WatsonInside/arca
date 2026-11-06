@@ -308,7 +308,8 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
         command = PY + ["-c", bootstrap, str(app_source), str(old), str(port)]
     else:
         bootstrap = (
-            "import sys,json,signal;print('headless: start',flush=True);"
+            "import sys,json,signal,faulthandler;print('headless: start',flush=True);"
+            "faulthandler.dump_traceback_later(25,repeat=False);"
             "sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2]);"
             "from update_fixtures import upstream;fixture=upstream(sys.argv[4]);fixture.__enter__();"
             "print('headless: fixture ready',flush=True);"
@@ -316,8 +317,11 @@ def headless(runner, full_update=False, fixture="short", port_file=None):
             "print('headless: imports ready',flush=True);"
             "e=engine.Engine();assert e.version=='26.05',e.version;"
             "print('headless: engine ready',flush=True);"
-            "ctx=server.AppContext(e,Settings(),sys.argv[1]+'/arca/web');"
-            "service=server.Server(ctx);service.start();"
+            "settings=Settings();print('headless: settings ready',flush=True);"
+            "ctx=server.AppContext(e,settings,sys.argv[1]+'/arca/web');"
+            "print('headless: context ready',flush=True);"
+            "service=server.Server(ctx);print('headless: server built',flush=True);"
+            "service.start();print('headless: server started',flush=True);"
             "open(sys.argv[3],'w').write(json.dumps({'port':service.port,'token':ctx.token}));"
             "print('Bundled 26.05 server with controlled '+sys.argv[4]+' upstream fixture',flush=True);signal.pause()"
         )
