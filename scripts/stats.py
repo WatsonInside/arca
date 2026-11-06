@@ -37,7 +37,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUILD = os.path.join(ROOT, "build")
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from _paths import build_dir  # noqa: E402
+BUILD = str(build_dir())
 LOGS_DIR = os.path.join(BUILD, "coslogs")
 OUT_PATH = os.path.join(BUILD, "stats", "stats.json")
 CONFIG_PATH = os.path.join(BUILD, "cos.json")

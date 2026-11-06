@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import cdp  # noqa: E402
+from _paths import build_dir  # noqa: E402
 
 PASS, FAIL = [], []
 SHOTS = os.path.join(ROOT, "assets", "shots")
@@ -158,7 +159,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", action="store_true")
     parser.add_argument("--fixture", choices=("short", "long"))
-    parser.add_argument("--port-file", default=os.path.join(ROOT, "build", "port-update.json"))
+    parser.add_argument("--port-file", default=os.path.join(str(build_dir()), "port-update.json"))
     args = parser.parse_args()
     do_install = args.install
     with open(args.port_file) as handle:
@@ -196,7 +197,7 @@ def main():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         debug_port = probe.getsockname()[1]
-    profile = tempfile.mkdtemp(prefix="chrome-upd-", dir=os.path.join(ROOT, "build"))
+    profile = tempfile.mkdtemp(prefix="chrome-upd-", dir=str(build_dir()))
     proc, ws = cdp.launch(debug_port, profile)
     ui = UI(ws)
     try:
@@ -420,7 +421,7 @@ def main():
               ui.js("document.querySelector('#engine-ver').textContent"))
 
         # --------------------------------------------- 6. and it still compresses
-        demo = os.path.join(ROOT, "build", "update-demo")
+        demo = os.path.join(str(build_dir()), "update-demo")
         os.makedirs(demo, exist_ok=True)
         src = os.path.join(demo, "更新后测试.txt")
         with open(src, "wb") as fh:

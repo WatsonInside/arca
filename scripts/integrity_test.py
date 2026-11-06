@@ -608,7 +608,7 @@ def main():
                                stderr=subprocess.DEVNULL, timeout=30,
                                check=False)
                 for _ in range(30):
-                    st = cli.get("/api/integration/status")
+                    st = cli.get("/api/integration")
                     dyn = [t["ext"] for t in st["types"]
                            if t["uti"].startswith("dyn.")]
                     if not dyn:

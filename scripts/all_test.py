@@ -280,6 +280,17 @@ def sync_bundle(runner):
         lines.append(f"{relative} SHA256 {digest} identical")
     for path in target.rglob("*.pyc"):
         path.unlink()
+    codesign = shutil.which("codesign")
+    if codesign:
+        signed = subprocess.run(
+            [codesign, "--force", "--deep", "--sign", "-", str(bundle)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        note = ("ad-hoc codesign ok" if signed.returncode == 0 else
+                "ad-hoc codesign failed: " +
+                signed.stdout.decode("utf-8", "replace")[-400:])
+    else:
+        note = "codesign unavailable; existing signatures kept"
+    lines.append(f"codesign: {note}")
     runner.log("sync", "\n".join(lines) + f"\nTest bundle synchronized: {len(lines)} source/web files, SHA256 identical; bundled pyc removed\nEXIT: 0\n")
     return launcher, target.parent
 

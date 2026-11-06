@@ -135,7 +135,16 @@ def launch(port: int, profile: str, size=(1120, 764), scale=2):
     if not ws_url:
         proc.kill()
         raise RuntimeError("chrome devtools not reachable")
-    return proc, WS(ws_url)
+    ws = WS(ws_url)
+    # --window-size is ignored by headless=new; pin the viewport so every UI
+    # suite sees the same 1120x764 CSS layout on any machine/runner.
+    try:
+        ws.call("Emulation.setDeviceMetricsOverride", {
+            "width": size[0], "height": size[1],
+            "deviceScaleFactor": scale, "mobile": False})
+    except Exception:
+        pass
+    return proc, ws
 
 
 def shoot(ws: WS, path: str, full=False):

@@ -23,6 +23,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from _paths import build_dir  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 from arca import archtxn  # noqa: E402
@@ -33,7 +35,7 @@ def _find_tool():
     path = shutil.which("7zz") or shutil.which("7z")
     if path:
         return path
-    for cand in sorted(glob.glob(os.path.join(ROOT, "build", "7z*", "7zz"))):
+    for cand in sorted(glob.glob(os.path.join(str(build_dir()), "7z*", "7zz"))):
         if os.path.isfile(cand):
             return cand
     return ""
