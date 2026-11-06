@@ -574,8 +574,16 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   套件，full 跑 `make test`；日志作为 artifact（不含 secrets / 用户数据）。
   `scripts/ci_check.py` 用 ruby 离线解析 YAML，检查触发方式、权限、ARCA_BUILD_DIR、
   无 secrets 引用、job 的 runs-on/timeout、nightly 未预启用，并检查本机
-  python/node/Chrome/7zz/runtime。**CI 远端从未运行，状态为“未验证”**；
-  本地只验证了工作流结构与命令可执行。
+  python/node/Chrome/7zz/runtime。**CI 远端已于 2026-11-07 首次全绿**：
+  `workflow_dispatch` full run
+  [42284502991](https://github.com/WatsonInside/arca/actions/runs/42284502991)
+  （head `f503dc9`，full job 4m49s，`make test` 33 passed / 0 failed，日志与
+  summary JSON 作为 artifact 上传）。quick 未单独触发；其命令（`make test-fast`
+  + 纯 Python 子集）与 full 的准备步骤重合，已在本机与 CI full 前置阶段覆盖。
+  nightly 仍未启用。首跑排障发现并修复了干净环境问题：运行时引导、runner 标签、
+  pyobjc 四框架、脚本 build 路径、共享 headless 保活、`server_bind` 反向 DNS、
+  LaunchServices 索引，以及测试 bundle 内嵌 dylib 签名与设置面板在全新机器上
+  的展开高度；逐轮记录见 `build/ci-first-run.md`。
 - **干净环境运行时引导（2026-11-07 补）**：`<构建目录>/python-runtime` 是历史手工
   产物（从已构建的 app 复制），不随仓库分发，因此全新 checkout 直接 `make bundle`
   会失败。`Makefile` 的 bundle 目标改为 `ARCA_PYTHON=$${ARCA_PYTHON:-<构建目录>/python-runtime}`
