@@ -83,7 +83,7 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 | retry-plan 8 / single-instance 5 / extract-safety 10 | 预填重开、单实例锁、解压写入边界 |
 | partial-extract 37 / fuzz-soak 6 | A1 选择性解压与异常回滚、损坏/截断/穿越/低磁盘/有界 soak |
 | interrupt-recovery 5 | 崩溃/中断后状态、任务日志、merge 回滚边界（真实 .app + 隔离 HOME） |
-| compress-draft 39 / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
+| compress-draft 63 / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
 
 ## 修改后的标准流程
 

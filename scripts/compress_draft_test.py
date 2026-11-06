@@ -46,9 +46,10 @@ TERMINAL = ("done", "error", "cancelled")
 ZSTD_LEVEL = 5
 COMPRESS_CANCEL_HINT = ("取消任务（本次未完成的归档/分卷会被清理；不会删除既有文件；"
                         "重试会重新压缩，目标同名文件可能被覆盖）")
-FRESH_CANCEL_HINT = "取消任务（已解出的文件会保留；重试会合并到目标目录，不删除原有文件）"
-MERGE_CANCEL_HINT = ("取消任务（已解出的文件会保留；重试仍会合并，"
-                     "同名文件可能被覆盖，无法撤销）")
+FRESH_CANCEL_HINT = ("取消任务（本次解出的文件会被清理，本次新建的目标目录会"
+                     "一并删除；重试会重新解压）")
+MERGE_CANCEL_HINT = ("取消任务（本次新增的文件会被清理；既有文件保留；"
+                     "重试仍会合并，同名文件可能被覆盖，无法撤销）")
 FRESH_RETRY_HINT = ("重试这个任务（目标已存在时合并，不删除原有文件；"
                     "只预填原参数，确认后再开始，不会自动排队）")
 MERGE_RETRY_HINT = ("重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销；"
@@ -285,6 +286,35 @@ class Harness:
         self.wait_js(f"document.querySelector('#view-{name}').classList.contains('is-active')")
         time.sleep(0.25)
 
+    def click_menu_item(self, label):
+        clicked = self.js(f"""(() => {{
+          const btn = [...document.querySelectorAll('.menu-item')].find(
+            b => (b.querySelector('.menu-label') || {{}}).textContent
+                 === {json.dumps(label)});
+          if (!btn) return false;
+          btn.click();
+          return true;
+        }})()""")
+        if not clicked:
+            raise AssertionError(f"menu item not found: {label}")
+
+    def force_queue_refresh(self):
+        """Ask the page itself to refresh the queue right now.
+
+        Idle polling backs off to 1.6 s and only reschedules after a refresh
+        the page started; a job submitted through the API can otherwise finish
+        before any card is painted.  The queue view's context menu exposes the
+        app's own “刷新任务列表” action, which re-renders the running card."""
+        self.wait_js("document.querySelector('#view-queue').classList.contains('is-active')")
+        self.js("""(() => {
+          const view = document.querySelector('#view-queue');
+          view.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true,
+            cancelable: true, clientX: 420, clientY: 320}));
+          return true;
+        })()""")
+        self.wait_js("!!document.querySelector('.menu')")
+        self.click_menu_item('刷新任务列表')
+
     def archive_names(self, target):
         status, body = self.api("/inspect", {"path": str(target)})
         if status != 200 or not body.get("ok"):
@@ -331,6 +361,21 @@ def build_fixtures(root: Path):
     merge_dest = dirs["H_dir"] / "extract-merge"
     merge_dest.mkdir()
     (merge_dest / "keep.txt").write_text("pre-existing keep\n", encoding="utf-8")
+    # T02 running：条目足够多，取消时任务仍在运行且已写出部分文件，供真实
+    # Chrome 读取 running 卡片文案并验证回滚只删除本次产物。
+    bulk = root / "bulk.zip"
+    with zipfile.ZipFile(bulk, "w", zipfile.ZIP_STORED) as zf:
+        for i in range(30000):
+            zf.writestr(f"bulk/{i:05d}.bin", b"x" * 512)
+    for key, stem in (("zip_running_fresh", "bulk-fresh"),
+                      ("zip_running_merge", "bulk-merge")):
+        files[key] = root / f"{stem}.zip"
+        files[key].write_bytes(bulk.read_bytes())
+    bulk.unlink()
+    running_merge = dirs["H_dir"] / "bulk-merge"
+    (running_merge / "other-task").mkdir(parents=True)
+    (running_merge / "keep.txt").write_text("pre-existing keep\n", encoding="utf-8")
+    (running_merge / "other-task" / "output.bin").write_text("other\n", encoding="utf-8")
     return dirs, files
 
 
@@ -856,6 +901,73 @@ def run(port_file):
             h.api("/job/cancel", {"id": job_id})
         for job_id in holders:
             h.wait_job(job_id)
+
+        # ---- 2d. T02 running: the same hints on live jobs, plus the disk
+        # rollback they promise.  Workers are free again, so each job really
+        # enters `running`; force_queue_refresh asks the page to repaint the
+        # queue with the app's own menu action, and the bulk fixtures keep
+        # the job running long enough for real partial output to exist.
+        def files_under(path):
+            path = Path(path)
+            if not path.is_dir():
+                return set()
+            return {p.relative_to(path) for p in path.rglob("*") if p.is_file()}
+
+        running_expected = {"fresh": FRESH_CANCEL_HINT,
+                            "merge": MERGE_CANCEL_HINT}
+
+        def running_cancel(kind):
+            archive = files[f"zip_running_{kind}"]
+            dest = dirs["H_dir"] / f"bulk-{kind}"
+            baseline = files_under(dest)
+            status, body = h.api("/extract", {
+                "path": str(archive), "destDir": str(dirs["H_dir"]),
+                "onExists": kind, "overwrite": False})
+            check(f"running {kind} 解压任务已受理",
+                  status == 200 and (body.get("job") or {}).get("id")
+                  and body.get("dest") == str(dest), f"{status} {body}")
+            job_id = body["job"]["id"]
+            h.wait_job(job_id, terminal=False, timeout=60)
+            h.navigate("queue")
+            h.force_queue_refresh()
+            h.wait_js(f"!!document.querySelector('[data-cancel=\"{job_id}\"]')", timeout=15)
+            deadline = time.monotonic() + 20
+            produced = set()
+            while time.monotonic() < deadline:
+                produced = files_under(dest) - baseline
+                if produced:
+                    break
+                time.sleep(0.02)
+            live = h.job(job_id) or {}
+            check(f"running {kind}：取消时任务仍在运行且已解出部分文件",
+                  live.get("status") == "running" and bool(produced),
+                  f"status={live.get('status')} produced={len(produced)}")
+            hint = hint_of(f'[data-cancel="{job_id}"]')
+            check(f"running {kind} 解压取消文案与回滚语义一致（真实 Chrome）",
+                  hint and hint["title"] == running_expected[kind]
+                  and hint["aria"] == running_expected[kind], str(hint))
+            h.click(f'[data-cancel="{job_id}"]')
+            gone = h.wait_job(job_id)
+            check(f"running {kind} 取消后状态为 cancelled 且保存 mode",
+                  gone["status"] == "cancelled" and gone.get("mode") == kind,
+                  str({k: gone.get(k) for k in ("status", "mode")}))
+            if kind == "fresh":
+                check("running fresh 取消删除本次创建的目标目录",
+                      not dest.exists(), str(dest))
+            else:
+                keep = dest / "keep.txt"
+                other = dest / "other-task" / "output.bin"
+                remain = files_under(dest)
+                check("running merge 取消只删除本次新增文件，既有/其他任务产物保留",
+                      keep.is_file()
+                      and keep.read_text(encoding="utf-8") == "pre-existing keep\n"
+                      and other.is_file()
+                      and other.read_text(encoding="utf-8") == "other\n"
+                      and remain == baseline,
+                      f"remain={sorted(str(p) for p in remain)[:6]} n={len(remain)}")
+
+        for kind in ("fresh", "merge"):
+            running_cancel(kind)
         return not check.failed
     finally:
         try:

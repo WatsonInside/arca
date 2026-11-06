@@ -487,7 +487,9 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   `read()` 返回 EOF，任务线程得以展开收尾并关闭管道；取消线程不跨线程 close。
 - `JobManager.cancel()`：queued 任务立即标记 cancelled（不执行任务体、不产出
   文件）；running 任务置 `正在取消…` 并在有界时间内回收子进程。压缩取消会
-  清理本任务刚创建、可判定为未完成的归档/分卷；解压保留已解出的文件。
+  清理本任务刚创建、可判定为未完成的归档/分卷；解压取消/失败由任务所有者
+  回滚本次产物——`fresh` 删除本任务创建的目录，`merge` 只删本次新增文件与
+  空目录，既有文件/其他任务产物保留（同名覆盖无法恢复）。
 - `JobManager.shutdown()`：先拒绝新任务，再取消 queued/running、有界等待
   worker 收尾并清 journal。UI 关最后窗口/Cmd-Q 与 headless SIGTERM/SIGINT
   走同一入口；语义契约见 [`CANCEL-ROLLBACK.md`](CANCEL-ROLLBACK.md)。

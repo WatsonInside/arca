@@ -150,7 +150,7 @@ App 版本、macOS 大版本与架构一起发送。首次启动时先询问（�
 | interrupt-recovery 5 | 崩溃/中断后的状态、任务日志与回滚边界（真实 .app + 隔离 HOME） |
 | jobwait 7 / menu-cleanup 9 | 任务等待时序、测试收尾策略 |
 | shutdown 10 / extract-safety 10 | 取消/退出子进程有界收尾、解压写入边界与危险条目拒绝 |
-| compress-draft 39 | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
+| compress-draft 63 | 压缩草稿生命周期、取消状态与目录隔离（真实 UI→HTTP→磁盘） |
 
 ```
 Arca.app/Contents/

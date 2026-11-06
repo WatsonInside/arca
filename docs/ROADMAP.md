@@ -170,14 +170,14 @@
 | full 性能基准（512 MiB / 20,000 文件 / 1,000 目录 / 8 路 inspect） | ✅ 2026-10-27 已跑 | 原始 JSON/日志见 [`docs/BENCHMARK.md`](BENCHMARK.md)；只建立基线，不宣称优化或回退 |
 | 长时 soak（30–60 分钟） | ✅ 2026-10-27 已跑 35.0 分钟 | 512 轮、0 失败、64 次心跳；RSS/FD/子进程/临时树趋势见 BENCHMARK；不宣称"已证明无泄漏" |
 | 中断恢复（崩溃/中断识别 + 确定性回归） | ✅ 2026-10-27 已实现并回归 | 不做自动续传；启动后标为「中断 · 产物可能不完整」，半成品保留不静默删除；`interrupt-recovery` 4 场景进 `make test`（26 套件） |
-| R1 工程收口（T07a 测试 manifest / T03 原子写 / T02 取消重试 / T11 叠层 a11y） | ✅ 2026-10-29 已完成并回归 | `make test` 26/26 全绿；缺口（2026-11-07 更新）：fresh/merge 解压取消与重试文案已补真实 Chrome 断言（`compress-draft` 53 项）、读屏人工项未做、T03 未做真实断电 |
+| R1 工程收口（T07a 测试 manifest / T03 原子写 / T02 取消重试 / T11 叠层 a11y） | ✅ 2026-10-29 已完成并回归 | `make test` 26/26 全绿；缺口（2026-11-07 更新）：fresh/merge 解压取消与重试文案、queued/running 状态及取消回滚磁盘结果已补真实 Chrome 断言（`compress-draft` 63 项）、读屏人工项未做、T03 未做真实断电 |
 | R2 取消/退出语义（T00 契约 / T01 子进程注册与有界收尾） | ✅ 2026-10-29 已完成（T00 待用户/复核确认） | 新增 `shutdown` 套件 10 项；`interrupt-recovery` 增 SIGTERM 场景至 5 项；`make test` 27/27；缺口（2026-11-07 更新）：真实 Cmd-Q 已本地补验（证据 `build/t02-cmdq-evidence.json`）、引擎静默子进程为模拟、未做真实断电 |
 | R5a 预填重开与单实例锁（T10+T12-lite） | ✅ 完成（2026-10-29） | `make test` 31 套全绿；journal schema v2 安全参数 + `retry-requests` 预填重开（源/条目缺失报错或警告、密码不回读、不自动排队）；`single-instance` 5 项（同 HOME 第二实例退出 3，`ARCA_HOME` 可隔离）；缺口：不做请求转交；真实 GUI NSAlert 提示为人工项 |
 | R5b 更新链路加固（T13 磁盘缓存/条件请求、T14 7-Zip 双源、T15 组件更新安全） | ✅ 2026-10-29 已完成并回归 | `make test` 32 套全绿；`appupdate` 41 项（磁盘缓存/304/repo 隔离/stale 禁止安装）、新增 `components` 15 项；官网为主源 + GitHub Releases 兜底、可信域与资产名校验、draft/prerelease 排除、JSON/源码包上限、临时文件+fsync+原子替换；缺口：真实断网/限流与 zstd/par2 真实编译安装未做端到端 |
 | R6 构建/CI/发布预检（T07b 构建目录、T08 CI 骨架、T09 release-check） | ✅ 2026-10-29 已完成并回归；CI 远端 2026-11-07 首次全绿 | `make test` 33 套全绿；`ARCA_BUILD_DIR` 统一覆盖（Makefile/脚本），空构建目录跑通 components + menu；新增 `release-check` 10 项（资产/摘要/tar 安全/签名状态/provenance/import 副作用/文案）；CI skeleton `workflow_dispatch` + 可选 PR，nightly 未启用；远端首次 full run 42284502991 通过（head f503dc9，33/33），quick run 42287171456 亦通过（head 62edb0e，32s） |
 | R4 覆盖压缩的可恢复替换（T06） | ✅ 2026-10-29 已完成并回归 | `make test` 29 套全绿；新增 `overwrite-txn` 11 项；覆盖写改为 staging + 同卷 rename，切换前 `7zz t`/`zstd -t` 回读校验，manifest 崩溃前滚，PAR2 best-effort；缺口：非单次原子、跨卷不支持、断电/外部改动未实测 |
 | R3a 写入边界与元数据硬上限（T04c/T04a） | ✅ 2026-10-29 已完成并回归 | `make test` 28 套全绿；新增 `extract-safety` 10 项；zipfix/zst 跳过不安全条目并计数，7zz/RAR 解压前用 `7zz l -slt` 预检并拒绝危险路径/符号链接归档；缺口：真实 RAR 链接未实测、TOCTOU、预检按整包拒绝 |
-| R3b App 自更新两阶段就绪（T05） | ✅ 2026-10-29 已完成并回归 | 页面 `init()` 后上报 `/api/ui-ready`（bridge/DOM/meta/引擎四项），后台线程等待（20 s）后才删旧包，超时/headless 保留旧包与恢复标记；`appupdate` 套件 34 项（新增 ConfirmUpdateTests）；缺口：真实 Cmd-Q/窗口创建失败人工 E2E、ui-ready 为页面自报 |
+| R3b App 自更新两阶段就绪（T05） | ✅ 2026-10-29 已完成并回归 | 页面 `init()` 后上报 `/api/ui-ready`（bridge/DOM/meta/引擎四项），后台线程等待（20 s）后才删旧包，超时/headless 保留旧包与恢复标记；`appupdate` 套件 34 项（新增 ConfirmUpdateTests）；缺口：窗口创建失败等人工 E2E（真实 Cmd-Q 已于 2026-11-07 本地补验，证据 `build/t02-cmdq-evidence.json`）、ui-ready 为页面自报 |
 | A2 归档追加/删除 | ⬜ 未做（当前唯一功能候选） | 原 A2；限 7z/zip，zipfix 修正名的 zip 禁原地修改 |
 | A5 tar.gz 创建 | ⏸ 暂停（本轮不排） | 原 A5；格式注册 + UI 选项，需单独验收 |
 | A3 签名/公证 | ⏸ 暂停（人工依赖） | 需要 Apple 开发者证书；Touch ID 的 ACL 需签名后补真人端到端验收 |

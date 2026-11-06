@@ -1059,16 +1059,17 @@ function jobSub(job) {
    list is built once per job and then patched in place. */
 const QNODES = new Map();          // job id -> card element
 
-/* Cancelling keeps whatever was already written (we never delete partial
-   output), so the hint spells out the real cleanup contract for each kind --
-   including fresh vs merge extraction, where a retry may overwrite same-name
-   files and that cannot be undone. */
+/* Cancel rollback is owned by the task thread: compress removes the incomplete
+   archive/multipart files this job wrote, and extract removes only what this
+   job produced -- a fresh destination is deleted whole, a merge destination
+   keeps every pre-existing file.  The hints spell out that contract, including
+   merge's same-name overwrite which cannot be undone. */
 function cancelHint(job) {
   if (job.kind === 'extract') {
     if (job.mode === 'merge') {
-      return '取消任务（已解出的文件会保留；重试仍会合并，同名文件可能被覆盖，无法撤销）';
+      return '取消任务（本次新增的文件会被清理；既有文件保留；重试仍会合并，同名文件可能被覆盖，无法撤销）';
     }
-    return '取消任务（已解出的文件会保留；重试会合并到目标目录，不删除原有文件）';
+    return '取消任务（本次解出的文件会被清理，本次新建的目标目录会一并删除；重试会重新解压）';
   }
   if (job.kind === 'compress') {
     return '取消任务（本次未完成的归档/分卷会被清理；不会删除既有文件；重试会重新压缩，目标同名文件可能被覆盖）';

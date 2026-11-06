@@ -583,7 +583,8 @@ class PartialExtractHttpTests(unittest.TestCase):
         status = self._controlled_extract(fresh, "cancel")
         self.assertEqual(status["status"], "cancelled", status)
         # The UI words its cancel hint from this field: a fresh destination
-        # tells the user "retry merges, existing files are kept".
+        # tells the user the whole job-created folder is removed on cancel,
+        # and a retry starts a new extraction instead of merging leftovers.
         self.assertEqual(status["mode"], "fresh", status)
         self.assertFalse(fresh.exists())
 
