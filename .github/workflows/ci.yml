@@ -1,8 +1,9 @@
-# Arca macOS CI 骨架（v3 T08）
+# Arca macOS CI（v3 T08）
 #
-# 状态：本地只做 YAML/结构校验（scripts/ci_check.py），未在 GitHub 远端运行过，
-# 因此文档与提交里必须写“未验证”。默认手动触发（workflow_dispatch）；PR 快速
-# 门禁为可选项；nightly 需要用户明确确认后才加 schedule，这里不预先启用。
+# 状态：2026-11-07 已在 GitHub 远端手动跑通——full run 42284502991（head f503dc9，
+# 33/33，full job 4m49s）、quick run 42287171456（head 62edb0e，quick job 32s）。
+# 默认手动触发（workflow_dispatch）；PR 快速门禁为可选入口（PR 实战未验证）；
+# nightly 需要用户明确确认后才加 schedule，这里不预先启用。
 name: ci
 on:
   workflow_dispatch:

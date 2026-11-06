@@ -7,8 +7,9 @@
 
 Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Python/pyobjc 后端 +
 本地 HTTP + 无框架前端（WKWebView）。内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0（universal）。
-单仓库、单人维护；已有 CI workflow（`.github/workflows/ci.yml`），远端尚未运行验证——
-当前质量仍靠本地全量门禁。
+单仓库、单人维护；已有 CI workflow（`.github/workflows/ci.yml`）。2026-11-07 已在
+GitHub 远端手动跑通 full（run 42284502991，head f503dc9，33/33，full job 4m49s）
+与 quick（run 42287171456，head 62edb0e，32s）；nightly 未启用、PR 实战未验证。
 
 ## 硬性规则（先读这个，违反会造成实际伤害）
 

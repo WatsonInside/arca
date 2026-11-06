@@ -613,9 +613,9 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   （patch `socket.getfqdn` 抛错时 `Server` 仍可构造并启动）。
 - 新增 `release-check` 套件 10 项（资产/摘要/tar 穿越与链接逃逸/provenance/
   import 副作用/文案），默认套件 32→33。
-- 缺口：GitHub Actions 远端未运行；macOS runner 的 Chrome/引擎缓存与真实 CI 时长
-  未验证；`make setup` 需要网络（pyobjc）；release-check 的签名/公证项在拿到证书前
-  只能是 WARN。
+- 边界（截至 2026-11-07）：CI 只验证了 `macos-15` 上的手动 full/quick；nightly 未
+  启用、PR 触发的实战门禁不在本次证据范围；日志 artifact 保留 7 天；`make setup`
+  需要网络（pyobjc）；release-check 的签名/公证项在拿到证书前只能是 WARN。
 
 ### 性能基准与可靠性工具（P2，2026-10-26）
 
@@ -633,7 +633,8 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   （轮数、各场景计数、失败数、未终结任务、RSS/FD、子进程、临时目录体积），结束时写
   结构化 JSON（实际墙钟、轮数、场景计数、失败、峰值）。长时模式**不**进 `make test`。
 - `make verify`：`node --check` + design_audit + 关键快速套件的本地预检；`make test`
-  仍是完整可信信号，本仓库没有远端 CI 运行记录。
+  仍是完整可信信号，本地发布流水与 CI 手动 full（见 T08 段）都以此为准；PR 门禁与
+  nightly 仍未验证。
 - 诊断包本轮**未实现**（现有日志不等于诊断包）；`make verify` 也不代表 CI 已通过。
 
 ## 能力矩阵
