@@ -578,8 +578,11 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   `workflow_dispatch` full run
   [42284502991](https://github.com/WatsonInside/arca/actions/runs/42284502991)
   （head `f503dc9`，full job 4m49s，`make test` 33 passed / 0 failed，日志与
-  summary JSON 作为 artifact 上传）。quick 未单独触发；其命令（`make test-fast`
-  + 纯 Python 子集）与 full 的准备步骤重合，已在本机与 CI full 前置阶段覆盖。
+  summary JSON 作为 artifact 上传）。quick 与 full 均已真实触发并通过：
+  quick run
+  [42287171456](https://github.com/WatsonInside/arca/actions/runs/42287171456)
+  （head `62edb0e`，32s；`make test-fast` 8 passed / 0 failed，selftest 58/0；
+  纯 Python 子集 components 15 / checksum 13 / zip-inspect 15，3 passed / 0 failed）。
   nightly 仍未启用。首跑排障发现并修复了干净环境问题：运行时引导、runner 标签、
   pyobjc 四框架、脚本 build 路径、共享 headless 保活、`server_bind` 反向 DNS、
   LaunchServices 索引，以及测试 bundle 内嵌 dylib 签名与设置面板在全新机器上
