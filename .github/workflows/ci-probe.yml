@@ -1,0 +1,14 @@
+name: ci-probe
+on:
+  workflow_dispatch:
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - run: echo "macos probe" && sw_vers && uname -m
+  ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: echo "ubuntu probe" && uname -a
