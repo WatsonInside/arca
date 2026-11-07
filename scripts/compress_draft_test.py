@@ -48,8 +48,8 @@ COMPRESS_CANCEL_HINT = ("取消任务（本次未完成的归档/分卷会被清
                         "重试会重新压缩，目标同名文件可能被覆盖）")
 FRESH_CANCEL_HINT = ("取消任务（本次解出的文件会被清理，本次新建的目标目录会"
                      "一并删除；重试会重新解压）")
-MERGE_CANCEL_HINT = ("取消任务（本次新增的文件会被清理；既有文件保留；"
-                     "重试仍会合并，同名文件可能被覆盖，无法撤销）")
+MERGE_CANCEL_HINT = ("取消任务（本次新增的文件会被清理；未被覆盖的既有文件保留；"
+                     "本次已覆盖的同名旧文件无法恢复；重试仍会合并，目标同名文件可能被覆盖）")
 FRESH_RETRY_HINT = ("重试这个任务（目标已存在时合并，不删除原有文件；"
                     "只预填原参数，确认后再开始，不会自动排队）")
 MERGE_RETRY_HINT = ("重试这个任务（合并到目标目录；同名文件可能被覆盖，无法撤销；"
@@ -365,6 +365,10 @@ def build_fixtures(root: Path):
     # Chrome 读取 running 卡片文案并验证回滚只删除本次产物。
     bulk = root / "bulk.zip"
     with zipfile.ZipFile(bulk, "w", zipfile.ZIP_STORED) as zf:
+        # First entry has the same name as a pre-existing merge file: with
+        # overwrite it is fully replaced while the job is still running, and
+        # the rollback afterwards must not pretend to restore the old bytes.
+        zf.writestr("victim.txt", "new content\n")
         for i in range(30000):
             zf.writestr(f"bulk/{i:05d}.bin", b"x" * 512)
     for key, stem in (("zip_running_fresh", "bulk-fresh"),
@@ -375,6 +379,7 @@ def build_fixtures(root: Path):
     running_merge = dirs["H_dir"] / "bulk-merge"
     (running_merge / "other-task").mkdir(parents=True)
     (running_merge / "keep.txt").write_text("pre-existing keep\n", encoding="utf-8")
+    (running_merge / "victim.txt").write_text("old content\n", encoding="utf-8")
     (running_merge / "other-task" / "output.bin").write_text("other\n", encoding="utf-8")
     return dirs, files
 
@@ -922,7 +927,10 @@ def run(port_file):
             baseline = files_under(dest)
             status, body = h.api("/extract", {
                 "path": str(archive), "destDir": str(dirs["H_dir"]),
-                "onExists": kind, "overwrite": False})
+                "onExists": kind,
+                # merge: request overwrite so the same-name entry really
+                # replaces the pre-existing victim file while still running.
+                "overwrite": "overwrite" if kind == "merge" else False})
             check(f"running {kind} 解压任务已受理",
                   status == 200 and (body.get("job") or {}).get("id")
                   and body.get("dest") == str(dest), f"{status} {body}")
@@ -938,6 +946,20 @@ def run(port_file):
                 if produced:
                     break
                 time.sleep(0.02)
+            if kind == "merge":
+                victim = dest / "victim.txt"
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if victim.is_file() and victim.read_bytes() == b"new content\n":
+                        break
+                    time.sleep(0.02)
+                live = h.job(job_id) or {}
+                check("running merge：同名旧文件已被完整覆盖且任务仍在运行",
+                      victim.is_file()
+                      and victim.read_bytes() == b"new content\n"
+                      and live.get("status") == "running",
+                      f"status={live.get('status')} "
+                      f"content={victim.read_bytes()[:24]!r}")
             live = h.job(job_id) or {}
             check(f"running {kind}：取消时任务仍在运行且已解出部分文件",
                   live.get("status") == "running" and bool(produced),
@@ -957,6 +979,11 @@ def run(port_file):
             else:
                 keep = dest / "keep.txt"
                 other = dest / "other-task" / "output.bin"
+                victim = dest / "victim.txt"
+                check("running merge 取消不恢复已被覆盖的旧内容",
+                      victim.is_file()
+                      and victim.read_bytes() == b"new content\n",
+                      f"content={victim.read_bytes()[:24]!r}")
                 remain = files_under(dest)
                 check("running merge 取消只删除本次新增文件，既有/其他任务产物保留",
                       keep.is_file()

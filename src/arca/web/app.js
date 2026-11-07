@@ -1067,7 +1067,7 @@ const QNODES = new Map();          // job id -> card element
 function cancelHint(job) {
   if (job.kind === 'extract') {
     if (job.mode === 'merge') {
-      return '取消任务（本次新增的文件会被清理；既有文件保留；重试仍会合并，同名文件可能被覆盖，无法撤销）';
+      return '取消任务（本次新增的文件会被清理；未被覆盖的既有文件保留；本次已覆盖的同名旧文件无法恢复；重试仍会合并，目标同名文件可能被覆盖）';
     }
     return '取消任务（本次解出的文件会被清理，本次新建的目标目录会一并删除；重试会重新解压）';
   }

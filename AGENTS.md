@@ -79,11 +79,11 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 | update 38 / update-long 40 | 引擎更新全流程（默认受控 fixture；真实安装下载仅显式 `--full-update`） |
 | compress-scan / compress-space / zip-* / inspect-* / extract-list / concurrency | 各子域 |
 | jobwait / menu-cleanup | 任务等待时序、menu 收尾策略（mock） |
-| shutdown 10 / overwrite-txn 11 | 取消/退出子进程有界收尾、覆盖压缩可恢复替换 |
+| shutdown 11 / overwrite-txn 11 | 取消/退出子进程有界收尾、覆盖压缩可恢复替换 |
 | retry-plan 8 / single-instance 5 / extract-safety 10 | 预填重开、单实例锁、解压写入边界 |
 | partial-extract 37 / fuzz-soak 6 | A1 选择性解压与异常回滚、损坏/截断/穿越/低磁盘/有界 soak |
 | interrupt-recovery 5 | 崩溃/中断后状态、任务日志、merge 回滚边界（真实 .app + 隔离 HOME） |
-| compress-draft 63 / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
+| compress-draft 65 / menu 103 | 压缩草稿生命周期、取消状态、真实 UI→HTTP→磁盘回归 |
 
 ## 修改后的标准流程
 
