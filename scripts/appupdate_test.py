@@ -167,6 +167,64 @@ class Tests(unittest.TestCase):
         self.updater.startup(ready=True)
         self.assertTrue(self.updater.marker.exists())
 
+    def test_identity_tolerates_device_renumbering(self):
+        """st_dev 会随卷重新挂载/重启变化，恢复身份不能依赖它。"""
+        self.install()
+        data = json.loads(self.updater.marker.read_text())
+        data['identity'] = [data['identity'][0] + 2, data['identity'][1]]
+        self.updater.marker.write_text(json.dumps(data))
+        boot = a.Updater(self.settings)
+        boot.startup(ready=True)
+        self.assertFalse(Path(data['old']).exists())
+        self.assertFalse(boot.marker.exists())
+        self.assertEqual(boot.recovery, '')
+
+    def test_stale_marker_from_older_version_cleans_on_startup(self):
+        """已经运行在更新版本上时，旧标记与旧包备份应自动清理而不是永久卡住。"""
+        self.install()
+        data = json.loads(self.updater.marker.read_text())
+        data['version'] = '1.0.0'
+        self.updater.marker.write_text(json.dumps(data))
+        boot = a.Updater(self.settings)
+        boot.startup(ready=True)
+        self.assertFalse(Path(data['old']).exists())
+        self.assertFalse(boot.marker.exists())
+        self.assertEqual(boot.recovery, '')
+
+    def test_resolve_recovery_discards_marker_and_backup(self):
+        self.install()
+        data = json.loads(self.updater.marker.read_text())
+        boot = a.Updater(self.settings)
+        boot.startup(ready=False)
+        self.assertIn('手动', boot.recovery)
+        result = boot.resolve_recovery('discard')
+        self.assertTrue(result['cleared'], result)
+        self.assertFalse(Path(data['old']).exists())
+        self.assertFalse(boot.marker.exists())
+        self.assertEqual(boot.recovery, '')
+
+    def test_resolve_recovery_rejects_unknown_action_and_foreign_path(self):
+        self.install()
+        with self.assertRaises(a.UpdateError):
+            self.updater.resolve_recovery('delete-everything')
+        data = json.loads(self.updater.marker.read_text())
+        forged = self.make_bundle(self.root / 'User.app', '1.0.0')
+        data['old'] = str(forged)
+        self.updater.marker.write_text(json.dumps(data))
+        with self.assertRaises(a.UpdateError):
+            self.updater.resolve_recovery('discard')
+        self.assertTrue(forged.is_dir())
+        self.assertTrue(self.updater.marker.exists())
+
+    def test_apply_blocked_message_points_to_recovery_cleanup(self):
+        self.install()
+        self.updater.installer = None
+        self.updater.cached = {'repo': 'owner/repo', 'latest': '1.0.1', 'available': True, 'ok': True}
+        self.updater.checked_at = time.time()
+        with self.assertRaises(a.UpdateError) as raised:
+            self.updater.apply('1.0.1')
+        self.assertIn('清理恢复标记', str(raised.exception))
+
     def test_marker_failure_rolls_back(self):
         inst = self.install(marker_error=True)
         self.assertEqual(inst.snapshot()['phase'], 'error')
@@ -286,6 +344,19 @@ class Tests(unittest.TestCase):
             service.stop()
             service.httpd.server_close()
             service.thread.join()
+
+    def test_http_recovery_discards_marker(self):
+        self.install()
+        data = json.loads(self.updater.marker.read_text())
+        self.assertTrue(self.updater.marker.exists())
+        handler = object.__new__(server.Handler)
+        handler.ctx = SimpleNamespace(app_updater=self.updater)
+        handler._json = lambda data: data
+        result = handler._api_post('/api/appupdate/recovery', {'action': 'discard'})
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['recovery']['cleared'])
+        self.assertFalse(self.updater.marker.exists())
+        self.assertFalse(Path(data['old']).exists())
 
     def test_http_apply_ignores_body_urls(self):
         with patch.object(a, '_read', return_value=json.dumps(self.release).encode()):

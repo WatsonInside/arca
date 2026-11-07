@@ -73,7 +73,7 @@ build/Arca-test.app/Contents/MacOS/Arca --headless --port-file build/port-x.json
 | menu 103 | 右键菜单 + 设置面板 + A1 嵌套选择/重选真实 UI（CDP） |
 | acceptance 22 | HTTP 行为探针 |
 | progress 8 | 7-Zip 进度解析（退格符回归锁） |
-| keyring 53 / appupdate 41 | 钥匙串、应用自更新（磁盘缓存/304/stale） |
+| keyring 53 / appupdate 47 | 钥匙串、应用自更新（磁盘缓存/304/stale） |
 | components 15 | 7-Zip 双源与组件更新安全（T14/T15） |
 | release-check 10 | 只读发布预检（资产/摘要/tar 安全/签名状态/测试 provenance） |
 | update 38 / update-long 40 | 引擎更新全流程（默认受控 fixture；真实安装下载仅显式 `--full-update`） |

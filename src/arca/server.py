@@ -366,6 +366,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/appupdate/dismiss":
                 ctx.app_updater.dismiss(body.get("version"))
                 return self._json({"ok": True})
+            if path == "/api/appupdate/recovery":
+                if self._busy("更新恢复"):
+                    return
+                return self._json({"ok": True,
+                                   "recovery": ctx.app_updater.resolve_recovery(body.get("action"))})
             if path == "/api/appupdate/restart":
                 if self._busy("重启"):
                     return

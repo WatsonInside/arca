@@ -436,7 +436,8 @@ class Updater:
                     or not self.cached.get('available')):
                 raise UpdateError("请先检查应用更新")
             if self.marker.exists():
-                raise UpdateError("上次应用更新尚待确认，请重启应用或检查恢复标记")
+                detail = f"（{self.recovery}）" if self.recovery else ""
+                raise UpdateError(f"上次应用更新尚待确认{detail}；请先在设置页清理恢复标记后重试")
             self.installer = Installer(self, dict(self.cached))
             self.installer.start()
             return self.installer.snapshot()
@@ -498,31 +499,75 @@ class Updater:
         threading.Timer(0.5, lambda: os._exit(0)).start()
         return {"ok": True, "restarting": True}
 
+    def _load_marker(self):
+        """读取恢复标记并做路径/身份安全校验。
+
+        身份校验只用 inode：st_dev 会随 APFS 卷重新挂载或重启而变化，不能
+        当作跨启动身份。旧包还必须仍在当前 bundle 所在卷上，避免误删移动到
+        其他卷的同名目录。
+        """
+        data = json.loads(self.marker.read_text())
+        current = self.bundle
+        old = Path(str(data.get('old') or ''))
+        if (current is None or current.is_symlink() or current.resolve() != current
+                or data.get('schema') != 1 or data.get('current') != str(current)
+                or not re.fullmatch(r'\.Arca-old-\d+-[0-9a-f]{32}\.app', old.name)
+                or old.parent != current.parent or old.is_symlink()
+                or old.resolve() != old or not old.is_dir()):
+            raise UpdateError("恢复标记路径不可信")
+        identity = data.get('identity')
+        inode = identity[1] if isinstance(identity, list) and len(identity) == 2 else None
+        if not isinstance(inode, int):
+            raise UpdateError("恢复旧包身份缺失")
+        st = old.stat()
+        if st.st_ino != inode:
+            raise UpdateError("恢复旧包身份已变化")
+        if st.st_dev != current.stat().st_dev:
+            raise UpdateError("恢复旧包不在当前应用所在卷上")
+        return data, old
+
+    def _drop_marker_and_backup(self, old):
+        """确认成功或显式清理时，删除旧包备份与恢复标记。"""
+        bundle_version(old)
+        shutil.rmtree(old, ignore_errors=True)
+        self.marker.unlink(missing_ok=True)
+        self.recovery = ''
+
     def startup(self, ready=False):
         if not self.marker.exists():
             self._sweep_old_bundles()
             return
         try:
-            data = json.loads(self.marker.read_text())
-            current = self.bundle
-            old = Path(data['old'])
-            if (current is None or current.is_symlink() or current.resolve() != current
-                    or data.get('schema') != 1 or data.get('current') != str(current)
-                    or not re.fullmatch(r'\.Arca-old-\d+-[0-9a-f]{32}\.app', old.name)
-                    or old.parent != current.parent or old.is_symlink()
-                    or old.resolve() != old or not old.is_dir()):
-                raise UpdateError("恢复标记路径不可信")
-            st = old.stat()
-            if [st.st_dev, st.st_ino] != data.get('identity'):
-                raise UpdateError("恢复旧包身份已变化")
-            if not ready or self.current != data['version'] or bundle_version(current) != self.current:
+            data, old = self._load_marker()
+            version = str(data.get('version') or '')
+            if version != self.current:
+                # 已经运行在比标记更新的版本上（例如用户手动覆盖安装了新版）：
+                # 上一次更新的回滚备份与确认都已无意义，直接清理。
+                if version and is_newer(self.current, version):
+                    self._drop_marker_and_backup(old)
+                    return
                 raise UpdateError("新版本尚未确认启动成功")
-            bundle_version(old)
-            shutil.rmtree(old)
-            self.marker.unlink()
+            if not ready or bundle_version(self.bundle) != self.current:
+                raise UpdateError("新版本尚未确认启动成功")
+            self._drop_marker_and_backup(old)
         except Exception as exc:
-            self.recovery = f'应用更新恢复需要手动处理：{exc}；请查看 {self.marker}'
+            self.recovery = f'应用更新恢复需要手动处理：{exc}；可在设置页清理恢复标记'
 
+    def resolve_recovery(self, action='discard'):
+        """显式清理恢复标记（设置页动作）。
+
+        只有路径与身份可安全验证时才删除旧包备份；否则抛错并保留现场。
+        """
+        if action != 'discard':
+            raise UpdateError("未知的恢复操作")
+        if not self.marker.exists():
+            self.recovery = ''
+            return {'ok': True, 'cleared': False, 'message': '没有待处理的恢复标记'}
+        data, old = self._load_marker()
+        name = old.name
+        self._drop_marker_and_backup(old)
+        return {'ok': True, 'cleared': True,
+                'message': f'已清理上次更新的恢复标记与旧包备份（{name}）'}
 
 class Installer:
     def __init__(self, updater, info):

@@ -2670,8 +2670,17 @@ async function openSettings(focus) {
     $('#set-app-version', back).textContent = info.recovery || (info.enabled
       ? `Arca ${here}${info.available ? ' · ' + (info.skipped ? '已跳过 ' : '新版本 ') + info.latest : ''}` : `Arca ${here} · 应用更新已关闭`);
     const button = $('#set-app-check', back);
-    button.disabled = !info.enabled;
-    button.textContent = info.available ? `新版本 ${info.latest} · 下载并更新` : '检查应用更新…';
+    button.dataset.recovery = info.recovery || '';
+    button.dataset.confirm = '';
+    if (info.recovery) {
+      button.disabled = false;
+      button.title = info.recovery;
+      button.textContent = '清理更新恢复标记…';
+    } else {
+      button.title = '';
+      button.disabled = !info.enabled;
+      button.textContent = info.available ? `新版本 ${info.latest} · 下载并更新` : '检查应用更新…';
+    }
     return info;
   }
   // The repo row is visible now (no fold), so the version line loads on open.
@@ -2683,6 +2692,26 @@ async function openSettings(focus) {
     } catch (err) { toast(err.message, 'err'); }
   };
   $('#set-app-check', back).onclick = async () => {
+    const btn = $('#set-app-check', back);
+    if (btn.dataset.recovery) {
+      if (btn.dataset.confirm !== '1') {
+        btn.dataset.confirm = '1';
+        btn.textContent = '确认清理恢复标记？';
+        return;
+      }
+      btn.dataset.confirm = '';
+      btn.disabled = true;
+      try {
+        const r = await api('/appupdate/recovery', { action: 'discard' });
+        toast(r.recovery.message, 'ok');
+        await loadAppUpdate(true);
+      } catch (err) {
+        toast(err.message, 'err');
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
     try {
       let info = await loadAppUpdate();
       const resuming = info.install && info.install.phase !== 'error';

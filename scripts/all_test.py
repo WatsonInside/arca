@@ -49,7 +49,7 @@ SUITES = [
     {"name": "concurrency", "kind": "passed_failed", "script": "concurrency_test", "deps": ["engine"], "min": 3},
     {"name": "keyring", "kind": "unittest", "script": "keyring_test", "deps": [], "min": 45},
     {"name": "progress", "kind": "passed_failed", "script": "progress_test", "deps": ["engine"], "min": 6},
-    {"name": "appupdate", "kind": "unittest", "script": "appupdate_test", "deps": ["fixture"], "min": 41},
+    {"name": "appupdate", "kind": "unittest", "script": "appupdate_test", "deps": ["fixture"], "min": 47},
     {"name": "components", "kind": "unittest", "script": "components_test", "deps": [], "min": 15},
     {"name": "release-check", "kind": "unittest", "script": "release_check_test", "deps": [], "min": 10},
     {"name": "zip-password", "kind": "unittest", "script": "zip_password_test", "deps": ["engine"], "min": 6},

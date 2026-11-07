@@ -505,8 +505,9 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   发一次 GET，HTTP 200 就当作"新版本启动成功"，随即删除旧包。这只证明
   HTTP 服务活着，不证明页面/JS/引擎可用；而且发生在窗口创建之前，超时还
   会拖慢启动。
-- 现在：安装阶段仍写 `appupdate-recovery.json`（schema/路径/dev-ino/版本
-  校验保持不变）。页面 `init()` 完成后由前端主动 POST `/api/ui-ready`，上报
+- 现在：安装阶段仍写 `appupdate-recovery.json`（schema/路径/inode/版本校验；
+  身份只比 inode，并要求旧包与当前 bundle 在同一卷——`st_dev` 会随 APFS 卷
+  重新挂载/重启变化，不能当跨启动身份）。页面 `init()` 完成后由前端主动 POST `/api/ui-ready`，上报
   四项真实自检：`bridge`（WKWebView 的 `window.webkit.messageHandlers.arca`
   存在）、`dom`（`#engine-card`/`#c-format`/`#set-updnow` 已渲染）、`meta`
   （`/api/meta` 成功返回）、`engine`（引擎版本字段非空）。四项全为真才
@@ -518,13 +519,18 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
 - 幂等：重复/迟到的 ui-ready 只覆盖 checks 并 `set()`；确认线程只启动一次；
   `Updater.startup()` 在标记已删除时直接做一次旧备份清扫并返回，不会重复
   删除或报错。
+- 卡住的恢复标记可自愈/可清理（2026-11-07 修复）：启动时若标记版本低于当前
+  运行版本（例如更新后用户又手动覆盖安装），直接清理旧包备份与标记；设置页
+  在 `recovery` 非空时显示「清理更新恢复标记…」，点击两次确认后调用
+  `POST /api/appupdate/recovery`（`_load_marker` 校验通过才删旧包），然后
+  刷新设置页。修复了设备号变化导致更新按钮被永久挡住的问题。
 - 已知边界：ui-ready 是页面自报（有 token 保护，但不防本机恶意进程）；"页面
   存在但 JS 语法错误" 会落到超时分支（保守保留旧包）；超时后标记仍在，下次
   正常启动会再次等待页面确认；窗口创建失败场景未做人工 E2E（Cmd-Q 已补验，证据见 `build/t02-cmdq-evidence.json`）。
 - 测试：`scripts/appupdate_test.py` 新增 `ConfirmUpdateTests`（headless 不清理、
   超时保留、就绪确认、无标记不动作、无 updater 不动作），并把
   `test_http_server_cached_apply_end_to_end` 改为真实 POST ui-ready 后等待
-  异步清理；套件共 34 项通过。
+  异步清理；套件共 47 项通过（2026-11-07 新增恢复自愈/迁移测试）。
 
 ### 更新链路加固（R5b：T13/T14/T15，2026-10-29）
 
