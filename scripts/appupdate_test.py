@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import shutil
 import sys
 import tarfile
 import threading
@@ -224,6 +225,110 @@ class Tests(unittest.TestCase):
         with self.assertRaises(a.UpdateError) as raised:
             self.updater.apply('1.0.1')
         self.assertIn('清理恢复标记', str(raised.exception))
+
+    def _marker_data(self):
+        return json.loads(self.updater.marker.read_text())
+
+    def test_backup_replaced_after_validation_is_preserved(self):
+        """校验后、认领前旧包路径被替换：保留替换目录与标记，不虚报清理。"""
+        self.install()
+        data = self._marker_data()
+        old = Path(data['old'])
+        def swap(updater, path):
+            self.assertEqual(Path(path), old)
+            shutil.rmtree(old)
+            self.make_bundle(Path(data['old']), '9.9.9')
+            (Path(data['old']) / 'user-file.txt').write_text('user data\n')
+        with patch.object(a.Updater, '_before_claim', autospec=True, side_effect=swap):
+            with self.assertRaises(a.UpdateError) as raised:
+                self.updater.resolve_recovery('discard')
+        self.assertIn('替换', str(raised.exception))
+        self.assertTrue(old.is_dir())
+        self.assertEqual((old / 'user-file.txt').read_text(), 'user data\n')
+        self.assertTrue(self.updater.marker.exists())
+
+    def test_backup_removal_failure_keeps_marker_and_allows_retry(self):
+        """删除失败不得清标记或虚报成功；改回原名后下一次可继续清理。"""
+        self.install()
+        data = self._marker_data()
+        old = Path(data['old'])
+        with patch.object(a.shutil, 'rmtree', side_effect=OSError('simulated removal failure')):
+            with self.assertRaises(a.UpdateError) as raised:
+                self.updater.resolve_recovery('discard')
+        self.assertIn('清理失败', str(raised.exception))
+        self.assertTrue(old.is_dir())
+        self.assertTrue(self.updater.marker.exists())
+        result = self.updater.resolve_recovery('discard')
+        self.assertTrue(result['cleared'], result)
+        self.assertFalse(old.exists())
+        self.assertFalse(self.updater.marker.exists())
+
+    def test_backup_partial_removal_keeps_marker_and_allows_retry(self):
+        """部分删除后标记保留；下一次重试可继续清理剩余内容。"""
+        self.install()
+        data = self._marker_data()
+        old = Path(data['old'])
+        victim = old / 'Contents' / 'MacOS' / 'Arca'
+        def partial(path, *args, **kwargs):
+            victim.unlink()
+            raise OSError('simulated partial removal')
+        with patch.object(a.shutil, 'rmtree', side_effect=partial):
+            with self.assertRaises(a.UpdateError):
+                self.updater.resolve_recovery('discard')
+        self.assertTrue(old.is_dir())
+        self.assertTrue(self.updater.marker.exists())
+        result = self.updater.resolve_recovery('discard')
+        self.assertTrue(result['cleared'], result)
+        self.assertFalse(old.exists())
+        self.assertFalse(self.updater.marker.exists())
+
+    def test_marker_with_missing_backup_is_cleaned_on_startup(self):
+        """旧包已不存在但标记残留：新版本启动时只清理标记，避免永久卡住。"""
+        self.install()
+        data = self._marker_data()
+        shutil.rmtree(data['old'])
+        data['version'] = '1.0.0'
+        self.updater.marker.write_text(json.dumps(data))
+        boot = a.Updater(self.settings)
+        boot.startup(ready=True)
+        self.assertFalse(boot.marker.exists())
+        self.assertEqual(boot.recovery, '')
+
+    def test_resolve_recovery_missing_backup_clears_marker_only(self):
+        self.install()
+        data = self._marker_data()
+        shutil.rmtree(data['old'])
+        result = self.updater.resolve_recovery('discard')
+        self.assertTrue(result['cleared'], result)
+        self.assertIn('旧包备份已不存在', result['message'])
+        self.assertFalse(self.updater.marker.exists())
+
+    def test_symlink_backup_is_rejected_and_preserved(self):
+        """旧包路径变成 symlink：拒绝并保留链接目标与标记。"""
+        self.install()
+        data = self._marker_data()
+        old = Path(data['old'])
+        shutil.rmtree(old)
+        target = self.make_bundle(self.root / 'target-bundle', '1.0.0')
+        old.symlink_to(target)
+        with self.assertRaises(a.UpdateError):
+            self.updater.resolve_recovery('discard')
+        self.assertTrue(old.is_symlink())
+        self.assertTrue(target.is_dir())
+        self.assertTrue(self.updater.marker.exists())
+
+    def test_wrong_inode_backup_is_rejected_and_preserved(self):
+        """同一路径换成另一个目录（inode 不同）：拒绝删除并保留标记。"""
+        self.install()
+        data = self._marker_data()
+        old = Path(data['old'])
+        shutil.rmtree(old)
+        self.make_bundle(old, '1.0.0')
+        with self.assertRaises(a.UpdateError) as raised:
+            self.updater.resolve_recovery('discard')
+        self.assertIn('身份', str(raised.exception))
+        self.assertTrue(old.is_dir())
+        self.assertTrue(self.updater.marker.exists())
 
     def test_marker_failure_rolls_back(self):
         inst = self.install(marker_error=True)

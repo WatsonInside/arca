@@ -2701,14 +2701,21 @@ async function openSettings(focus) {
       }
       btn.dataset.confirm = '';
       btn.disabled = true;
+      btn.textContent = '正在清理…';
       try {
         const r = await api('/appupdate/recovery', { action: 'discard' });
         toast(r.recovery.message, 'ok');
         await loadAppUpdate(true);
       } catch (err) {
         toast(err.message, 'err');
-      } finally {
-        btn.disabled = false;
+        // 清理失败时服务端会保留恢复标记；重新渲染真实状态，不能停留在
+        // 内部确认态已清空的“确认清理恢复标记？”文案上。
+        try {
+          await loadAppUpdate(true);
+        } catch (_) {
+          btn.disabled = false;
+          btn.textContent = '清理更新恢复标记…';
+        }
       }
       return;
     }

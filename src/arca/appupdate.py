@@ -499,12 +499,12 @@ class Updater:
         threading.Timer(0.5, lambda: os._exit(0)).start()
         return {"ok": True, "restarting": True}
 
-    def _load_marker(self):
-        """读取恢复标记并做路径/身份安全校验。
+    def _read_marker(self):
+        """解析并严格校验恢复标记的路径与元数据；不检查旧包是否存在。
 
-        身份校验只用 inode：st_dev 会随 APFS 卷重新挂载或重启而变化，不能
-        当作跨启动身份。旧包还必须仍在当前 bundle 所在卷上，避免误删移动到
-        其他卷的同名目录。
+        返回 (data, old, inode)。身份只比 inode：st_dev 会随 APFS 卷重新挂载
+        或重启而变化，不能当作跨启动身份；旧包是否与当前 bundle 同卷在旧包
+        存在时由 _inspect_marker 另行校验。
         """
         data = json.loads(self.marker.read_text())
         current = self.bundle
@@ -513,61 +513,169 @@ class Updater:
                 or data.get('schema') != 1 or data.get('current') != str(current)
                 or not re.fullmatch(r'\.Arca-old-\d+-[0-9a-f]{32}\.app', old.name)
                 or old.parent != current.parent or old.is_symlink()
-                or old.resolve() != old or not old.is_dir()):
+                or old.resolve() != old):
             raise UpdateError("恢复标记路径不可信")
         identity = data.get('identity')
         inode = identity[1] if isinstance(identity, list) and len(identity) == 2 else None
         if not isinstance(inode, int):
             raise UpdateError("恢复旧包身份缺失")
-        st = old.stat()
-        if st.st_ino != inode:
-            raise UpdateError("恢复旧包身份已变化")
-        if st.st_dev != current.stat().st_dev:
-            raise UpdateError("恢复旧包不在当前应用所在卷上")
-        return data, old
+        return data, old, inode
 
-    def _drop_marker_and_backup(self, old):
-        """确认成功或显式清理时，删除旧包备份与恢复标记。"""
-        bundle_version(old)
-        shutil.rmtree(old, ignore_errors=True)
+    def _inspect_marker(self):
+        """严格校验标记并返回 (data, old, inode, old_exists)。
+
+        旧包不存在与“路径不可信”分开：路径确实不存在时允许上层只清理标记；
+        symlink、外来路径、错误 inode 仍必须拒绝，旧包存在时还要求与当前
+        bundle 同卷。
+        """
+        data, old, inode = self._read_marker()
+        if old.is_dir():
+            st = old.stat()
+            if st.st_ino != inode:
+                raise UpdateError("恢复旧包身份已变化")
+            if st.st_dev != self.bundle.stat().st_dev:
+                raise UpdateError("恢复旧包不在当前应用所在卷上")
+            return data, old, inode, True
+        if old.exists():
+            raise UpdateError("恢复旧包路径不是目录")
+        return data, old, inode, False
+
+    def _before_claim(self, old):
+        """测试钩子：原子认领旧包之前触发；产品路径为空操作。"""
+
+    def _claim_backup(self, old, inode):
+        """用 renameat 原子认领旧包，返回 (claim, parent_fd, claim_name)。
+
+        旧包先在同一目录内改成随机 claim 名，再核对 inode 仍是校验时的对象；
+        若路径在校验后被替换，则把替换目录改回原名并中止，替换目录中的文件
+        原样保留，不把替换对象当作旧包删除。
+        """
+        parent = old.parent
+        parent_fd = os.open(str(parent), os.O_RDONLY | os.O_DIRECTORY)
+        claim_name = '.Arca-claim-%d-%s.app' % (os.getpid(), uuid.uuid4().hex)
+        self._before_claim(old)
+        try:
+            os.rename(old.name, claim_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        except FileNotFoundError:
+            os.close(parent_fd)
+            return None, None, None
+        except OSError:
+            os.close(parent_fd)
+            raise
+        verified = True
+        try:
+            st = os.stat(claim_name, dir_fd=parent_fd, follow_symlinks=False)
+            verified = st.st_ino == inode
+        except OSError:
+            verified = False
+        if not verified:
+            try:
+                os.rename(claim_name, old.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            except OSError:
+                pass
+            os.close(parent_fd)
+            raise UpdateError("旧包在清理前被替换，已中止并保留替换目录")
+        return parent / claim_name, parent_fd, claim_name
+
+    def _remove_claimed(self, claim, parent_fd, claim_name, old):
+        """删除已认领的旧包；失败时改回原名并保留标记，便于下次重试。
+
+        不再用 bundle_version() 做二次身份校验：部分删除会破坏包结构，但仍
+        是同一 inode 对象；身份已由认领时的 inode 校验保证。
+        """
+        try:
+            shutil.rmtree(claim)
+        except Exception as exc:
+            try:
+                if claim.exists():
+                    os.rename(claim_name, old.name, src_dir_fd=parent_fd,
+                              dst_dir_fd=parent_fd)
+            except OSError:
+                pass
+            os.close(parent_fd)
+            raise UpdateError("旧包备份清理失败，恢复标记已保留：%s" % exc)
+        os.close(parent_fd)
+
+    def _drop_marker_and_backup(self, data, old, inode):
+        """确认成功或显式清理：原子认领并删除旧包，成功后才删标记。
+
+        - 路径在校验后被替换：中止，替换目录与标记都保留，不虚报成功；
+        - 删除失败/部分删除：标记保留，下次可继续恢复；
+        - 旧包已不存在（严格路径校验已通过）：只清理标记。
+        """
+        if not old.exists():
+            self.marker.unlink(missing_ok=True)
+            if self.marker.exists():
+                raise UpdateError("恢复标记清理失败，请重试")
+            self.recovery = ''
+            return 'marker-only'
+        claim, parent_fd, claim_name = self._claim_backup(old, inode)
+        if claim is None:
+            self.marker.unlink(missing_ok=True)
+            if self.marker.exists():
+                raise UpdateError("恢复标记清理失败，请重试")
+            self.recovery = ''
+            return 'marker-only'
+        self._remove_claimed(claim, parent_fd, claim_name, old)
         self.marker.unlink(missing_ok=True)
+        if self.marker.exists():
+            raise UpdateError("恢复标记清理失败，请重试")
         self.recovery = ''
+        return 'backup+marker'
 
     def startup(self, ready=False):
         if not self.marker.exists():
             self._sweep_old_bundles()
             return
         try:
-            data, old = self._load_marker()
+            data, old, inode, old_exists = self._inspect_marker()
             version = str(data.get('version') or '')
+            if not old_exists:
+                # 旧包已不存在（例如被手动删除）：只在“当前已比标记版本新”
+                # 时清理标记；降级安装或同版本未就绪仍需保留并提示。
+                if version != self.current and version and is_newer(self.current, version):
+                    self.marker.unlink(missing_ok=True)
+                    if self.marker.exists():
+                        raise UpdateError("恢复标记清理失败，请重试")
+                    self.recovery = ''
+                    return
+                raise UpdateError("旧包备份缺失，无法完成更新确认")
             if version != self.current:
                 # 已经运行在比标记更新的版本上（例如用户手动覆盖安装了新版）：
                 # 上一次更新的回滚备份与确认都已无意义，直接清理。
                 if version and is_newer(self.current, version):
-                    self._drop_marker_and_backup(old)
+                    self._drop_marker_and_backup(data, old, inode)
                     return
                 raise UpdateError("新版本尚未确认启动成功")
             if not ready or bundle_version(self.bundle) != self.current:
                 raise UpdateError("新版本尚未确认启动成功")
-            self._drop_marker_and_backup(old)
+            self._drop_marker_and_backup(data, old, inode)
         except Exception as exc:
             self.recovery = f'应用更新恢复需要手动处理：{exc}；可在设置页清理恢复标记'
 
     def resolve_recovery(self, action='discard'):
         """显式清理恢复标记（设置页动作）。
 
-        只有路径与身份可安全验证时才删除旧包备份；否则抛错并保留现场。
+        严格路径校验失败必须抛错并保留现场；旧包不存在时只清理标记；
+        删除失败/部分删除时保留标记以便重试，不虚报 cleared。
         """
         if action != 'discard':
             raise UpdateError("未知的恢复操作")
         if not self.marker.exists():
             self.recovery = ''
             return {'ok': True, 'cleared': False, 'message': '没有待处理的恢复标记'}
-        data, old = self._load_marker()
-        name = old.name
-        self._drop_marker_and_backup(old)
+        data, old, inode, old_exists = self._inspect_marker()
+        if not old_exists:
+            self.marker.unlink(missing_ok=True)
+            if self.marker.exists():
+                raise UpdateError("恢复标记清理失败，请重试")
+            self.recovery = ''
+            return {'ok': True, 'cleared': True,
+                    'message': '旧包备份已不存在，仅清理了恢复标记'}
+        self._drop_marker_and_backup(data, old, inode)
         return {'ok': True, 'cleared': True,
-                'message': f'已清理上次更新的恢复标记与旧包备份（{name}）'}
+                'message': f'已清理上次更新的恢复标记与旧包备份（{old.name}）'}
+
 
 class Installer:
     def __init__(self, updater, info):
