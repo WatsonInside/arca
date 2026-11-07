@@ -178,6 +178,7 @@
 | R4 覆盖压缩的可恢复替换（T06） | ✅ 2026-10-29 已完成并回归 | `make test` 29 套全绿；新增 `overwrite-txn` 11 项；覆盖写改为 staging + 同卷 rename，切换前 `7zz t`/`zstd -t` 回读校验，manifest 崩溃前滚，PAR2 best-effort；缺口：非单次原子、跨卷不支持、断电/外部改动未实测 |
 | R3a 写入边界与元数据硬上限（T04c/T04a） | ✅ 2026-10-29 已完成并回归 | `make test` 28 套全绿；新增 `extract-safety` 10 项；zipfix/zst 跳过不安全条目并计数，7zz/RAR 解压前用 `7zz l -slt` 预检并拒绝危险路径/符号链接归档；缺口：真实 RAR 链接未实测、TOCTOU、预检按整包拒绝 |
 | R3b App 自更新两阶段就绪（T05） | ✅ 2026-10-29 已完成并回归 | 页面 `init()` 后上报 `/api/ui-ready`（bridge/DOM/meta/引擎四项），后台线程等待（20 s）后才删旧包，超时/headless 保留旧包与恢复标记；`appupdate` 套件 34 项（新增 ConfirmUpdateTests）；缺口：窗口创建失败等人工 E2E（真实 Cmd-Q 已于 2026-11-07 本地补验，证据 `build/t02-cmdq-evidence.json`）、ui-ready 为页面自报 |
+| 更新恢复标记自愈（v1.2.2 修复） | ✅ 2026-11-07 已完成并回归 | 恢复标记身份不再依赖 `st_dev`（APFS 卷重新挂载/重启后会变），只比 inode 且要求旧包与当前应用同卷；启动时标记版本低于当前版本自动清理，设置页新增「清理更新恢复标记…」显式清理（`POST /api/appupdate/recovery`）；`appupdate` 套件 41→47 项；`make test` 33 套全绿；缺口：设备号变化用改写标记模拟，未覆盖真实断电 |
 | A2 归档追加/删除 | ⬜ 未做（当前唯一功能候选） | 原 A2；限 7z/zip，zipfix 修正名的 zip 禁原地修改 |
 | A5 tar.gz 创建 | ⏸ 暂停（本轮不排） | 原 A5；格式注册 + UI 选项，需单独验收 |
 | A3 签名/公证 | ⏸ 暂停（人工依赖） | 需要 Apple 开发者证书；Touch ID 的 ACL 需签名后补真人端到端验收 |
