@@ -30,9 +30,14 @@ def _prepare_tmp() -> None:
     tempfile.tempdir = local_tmp
 
 
-def sh(args, **kw):
-    return subprocess.run(args, check=False, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, **kw)
+def sh(args, timeout=None, **kw):
+    """运行子进程；超时返回 rc=124，调用方可据此走回退路径。"""
+    try:
+        return subprocess.run(args, check=False, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or b"") + b"\n[timeout] " + " ".join(args).encode()
+        return subprocess.CompletedProcess(args, 124, out)
 
 
 def make_dmg(pretty=True):
@@ -70,10 +75,28 @@ def make_dmg(pretty=True):
     # macOS 27 deprecates (and, inside this sandbox, blocks) the old
     # `hdiutil attach -mountpoint` form with a bare "权限被拒绝".  diskutil's
     # replacement takes the same mount point and works.
+    # 本轮会话环境下 diskutil attach 可能无限等待（不返回错误），hdiutil
+    # attach 则直接“权限被拒绝”。两者都加超时；都不可用时回退为
+    # hdiutil create -srcfolder 直接生成只读镜像（不做 Finder 美化布局）。
     r = sh(["diskutil", "image", "attach", "--mountPoint", mount,
-            "--mountOptions", "nobrowse", tmp_dmg])
+            "--mountOptions", "nobrowse", tmp_dmg], timeout=90)
     if r.returncode != 0:
-        r = sh(["hdiutil", "attach", tmp_dmg, "-mountpoint", mount, "-nobrowse", "-noverify"])
+        r = sh(["hdiutil", "attach", tmp_dmg, "-mountpoint", mount,
+                "-nobrowse", "-noverify"], timeout=90)
+    if r.returncode != 0:
+        r = sh(["hdiutil", "create", "-volname", APP, "-srcfolder", stage,
+                "-fs", "HFS+", "-format", "UDZO", "-imagekey", "zlib-level=9",
+                "-ov", tmp_out], timeout=600)
+        if r.returncode != 0:
+            raise SystemExit("hdiutil create fallback failed: "
+                             + r.stdout.decode("utf-8", "replace"))
+        publish(tmp_out, out)
+        subprocess.run(["/System/Library/Frameworks/CoreServices.framework/"
+                        "Frameworks/LaunchServices.framework/Support/lsregister",
+                        "-u", os.path.join(stage, f"{APP}.app")],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _rmtree_batched(stage)
+        return out, False
     ok_layout = False
     if r.returncode == 0:
         # ditto stages every file as .BC.T_* and renames it afterwards; that
