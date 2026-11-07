@@ -9,7 +9,7 @@ Arca：macOS 原生压缩/解压应用。C 启动器（dlopen libpython）+ Pyth
 本地 HTTP + 无框架前端（WKWebView）。内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0（universal）。
 单仓库、单人维护；已有 CI workflow（`.github/workflows/ci.yml`）。2026-11-07 已在
 GitHub 远端手动跑通 full（run 42284502991，head f503dc9，33/33，full job 4m49s）
-与 quick（run 42287171456，head 62edb0e，32s）；nightly 未启用、PR 实战未验证。
+与 quick（run 42287171456，head 62edb0e，32s）；2026-11-07 对 main `2d718c1` 又跑通一次 full（run 42325009449，33/33，compress-draft 65、partial-extract 37）；nightly 未启用、PR 实战未验证。
 
 ## 硬性规则（先读这个，违反会造成实际伤害）
 

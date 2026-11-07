@@ -587,7 +587,10 @@ UI 的「重试」不再直接排队：`POST /api/jobs/retry-plan` 只读返回�
   [42287171456](https://github.com/WatsonInside/arca/actions/runs/42287171456)
   （head `62edb0e`，32s；`make test-fast` 8 passed / 0 failed，selftest 58/0；
   纯 Python 子集 components 15 / checksum 13 / zip-inspect 15，3 passed / 0 failed）。
-  nightly 仍未启用。首跑排障发现并修复了干净环境问题：运行时引导、runner 标签、
+  2026-11-07 对 main `2d718c1` 再次手动触发 full
+  [42325009449](https://github.com/WatsonInside/arca/actions/runs/42325009449)
+  （head `2d718c1`，33 passed / 0 failed；compress-draft 65、partial-extract 37；
+  quick job skipped）。nightly 仍未启用。首跑排障发现并修复了干净环境问题：运行时引导、runner 标签、
   pyobjc 四框架、脚本 build 路径、共享 headless 保活、`server_bind` 反向 DNS、
   LaunchServices 索引，以及测试 bundle 内嵌 dylib 签名与设置面板在全新机器上
   的展开高度；逐轮记录见 `build/ci-first-run.md`。
