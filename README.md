@@ -4,8 +4,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-12%2B-0b0d14?style=flat-square&logo=apple&logoColor=white" alt="macOS 12+">
-  <img src="https://img.shields.io/badge/release-v1.2.2-6d6df8?style=flat-square" alt="v1.2.2">
-  <img src="https://img.shields.io/badge/7--Zip-26.05-38bdf8?style=flat-square" alt="7-Zip 26.05">
+  <img src="https://img.shields.io/badge/release-v1.2.3-6d6df8?style=flat-square" alt="v1.2.3">
+  <img src="https://img.shields.io/badge/7--Zip-26.06-38bdf8?style=flat-square" alt="7-Zip 26.06">
   <img src="https://img.shields.io/badge/license-Apache--2.0-0b0d14?style=flat-square" alt="Apache-2.0">
   <img src="https://img.shields.io/badge/%E6%96%87%E4%BB%B6-%E4%B8%8D%E4%B8%8A%E4%BC%A0-10a35a?style=flat-square" alt="文件不上传">
 </p>
@@ -14,7 +14,7 @@ Arca 是一个 macOS 原生压缩 / 解压工具。它不追求"支持一切格�
 **看清里面有什么、选对参数、知道会发生什么**，然后才开始。
 
 - 原生窗口（NSWindow + WKWebView），不是网页壳子；拖放、右键、默认打开方式都接进系统。
-- 内置 7-Zip 26.05 / zstd 1.5.7 / par2 1.4.0，装完即用，不需要额外装命令行工具。
+- 内置 7-Zip 26.06 / zstd 1.5.7 / par2 2.0.0，装完即用，不需要额外装命令行工具。
 - 全程本机完成，文件不上传。联网只有两件事：检查更新（装不装由你决定），以及一条可关闭的匿名使用统计（见下文，首次启动时会先征求你的同意）。
 
 真实界面是这样的（浅色与深色都跟随系统）：
@@ -46,7 +46,7 @@ Arca 是一个 macOS 原生压缩 / 解压工具。它不追求"支持一切格�
 
 ```bash
 # 校验下载是否完整（摘要与 Release 里的 .sha256 一致）
-shasum -a 256 ~/Downloads/Arca-1.2.2.dmg
+shasum -a 256 ~/Downloads/Arca-1.2.3.dmg
 ```
 
 **方式二 · 从源码构建**
