@@ -78,7 +78,7 @@
 
 ### 引擎更新
 
-应用内置的是 7-Zip 通用二进制（当前 26.05）。7-Zip 一年要发好几个版本，其中不少是压缩包解析器的
+应用内置的是 7-Zip 通用二进制（当前 26.06，由官方 arm64 / x86_64 资产合并）。7-Zip 一年要发好几个版本，其中不少是压缩包解析器的
 安全修复——而解析的对象正是别人发来的文件。所以启动时会静默查一次官网，有新版本就弹一个中文说明，  
 由用户自己决定装不装。
 
@@ -237,7 +237,7 @@ Developer ID 账号之外无解，所以 Arca 改走**快速操作（Quick Actio
 
 ### 组件更新：和引擎更新同一条链路
 
-zstd 与 PAR2 都是外部程序，同样会出新版本（par2cmdline 从 0.8.1 到 1.4.0 就修了不少  
+zstd 与 PAR2 都是外部程序，同样会出新版本（par2cmdline 从 0.8.1 到 2.0.0 就修了不少
 边界问题），所以它们复用 7-Zip 引擎更新那一整套：**检查 → 中文说明 → 手动确认 → 安装 → 可回退**。
 
 差别只在安装策略，因为上游形态不同：
@@ -250,9 +250,10 @@ zstd 与 PAR2 都是外部程序，同样会出新版本（par2cmdline 从 0.8.1
 - **装在哪里**：`~/Library/Application Support/Arca/components/`，应用包不动（原因同引擎更新：  
   arm64 上原地改写会让签名失效）。装好后当前进程立刻切换，设置里可「恢复内置」。
 - **为什么源码编译而不是用包**：Homebrew 的 par2 bottle 依赖 `@@HOMEBREW_PREFIX@@/opt/libomp`，  
-  换台机器就报 `___kmpc_barrier` 找不到；而 par2 的 CMake 构建又必须有一份 autotools 生成的  
-  `config.h`。所以配方是显式的：编译命令、宏、需要手写的 `config.h` 都在  
-  `scripts/build_thirdparty.py` 里，运行时更新用同一份配方（`components.SOURCE_RECIPES`）。
+  换台机器就报 `___kmpc_barrier` 找不到。par2 2.0.0 改用 CMake 源码布局，除 `src` 外还需要
+  `include`、`libs/cxxopts`，以及构建时生成的 `include/par2/version.h`。所以配方是显式的：
+  编译命令、宏、需要手写的 `config.h` 与 `version.h` 都在 `scripts/build_thirdparty.py` 里，
+  运行时更新用同一份配方（`components.SOURCE_RECIPES`），不额外引入 CMake 或第三方依赖。
 - **universal 的代价**：x86_64 切片需要 `-DZSTD_DISABLE_ASM`（该汇编符号在 universal 下无法解析），  
   这是唯一一处编译参数偏离上游默认。
 - **不信任下载内容**：只接受 GitHub tag 源码包，解包路径做穿越检查，编译产物必须能跑并自报  
@@ -709,7 +710,7 @@ Arca.app/Contents/
 │       ├── arca/server.py     本地 HTTP API（127.0.0.1 随机端口 + X-Arca-Token 鉴权）
 │       ├── arca/app.py        NSWindow / WKWebView / 原生面板 / 菜单 / 主题
 │       ├── arca/web/          纯前端（无框架：app.js 状态渲染 + menu.js 右键菜单）
-│       └── vendor/            7zz 26.05 · zstd 1.5.7 · par2 1.4.0（均为 universal 二进制 + 许可证）
+│       └── vendor/            7zz 26.06 · zstd 1.5.7 · par2 2.0.0（均为 universal 二进制 + 许可证）
 ```
 
 几个关键决定：
@@ -901,7 +902,7 @@ Chrome DevTools 协议客户端）。
 2. **RAR 创建**依赖本机 WinRAR 命令行；RAR 解压则开箱可用（7-Zip 内置 Rar/Rar5 解码器）。
 3. `dist/Arca.app` 与 `dist/` 下的 `xar.*`、`port*.json` 是构建中间产物（本机沙箱禁止删除文件，
    无法清理）；可用的应用在 `release/Arca.app`，安装优先用 DMG / PKG。
-4. **引擎更新的中文摘要覆盖 24.01 – 26.05**（本项目写作时官网最新为 26.05）。更晚的版本会正常
+4. **引擎更新的中文摘要覆盖 24.01 – 26.06**（本项目写作时官网最新为 26.06）。更晚的版本会正常
    检测、正常安装，但说明区显示 7-Zip 官方原文并注明「暂无中文摘要」，需要时在 `updates.NOTES_ZH`
    里补一条即可。
 5. **引擎更新需要联网**；无网络时启动检查静默失败，手动检查会提示原因（如「无法连接更新服务器」）。

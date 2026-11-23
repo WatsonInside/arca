@@ -263,5 +263,60 @@ class InstallSafetyTests(unittest.TestCase):
         self.assertFalse(os.path.exists(str(target) + ".new"))
 
 
+class Par2TwoSourceRecipeTests(unittest.TestCase):
+    """PAR2 2.0 的 CMake 源码布局仍可走既有的轻量编译管线。"""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
+        self.addCleanup(temp.cleanup)
+        self.root = pathlib.Path(temp.name).resolve()
+
+    def test_runtime_and_bundle_recipes_cover_cmake_layout(self):
+        import build_thirdparty
+
+        runtime = components.SOURCE_RECIPES["par2"]
+        bundled = build_thirdparty.RECIPES["par2"]
+        self.assertEqual(bundled["version"], "2.0.0")
+        for spec in (runtime, bundled):
+            self.assertIn("include", spec["includes"])
+            self.assertIn("libs/cxxopts", spec["includes"])
+            self.assertIn("-D_FILE_OFFSET_BITS=64", spec["flags"])
+            self.assertIn("version_h", spec)
+
+    def test_source_build_generates_par2_version_header(self):
+        archive = self.root / "par2cmdline-2.0.0.tar.gz"
+        with components.tarfile.open(archive, "w:gz") as tf:
+            payload = b"// minimal source fixture\n"
+            info = components.tarfile.TarInfo("par2cmdline-2.0.0/src/dummy.cpp")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+        fake_binary = self.root / "fake-par2"
+        fake_binary.write_text("#!/bin/sh\necho 'par2cmdline version 2.0.0'\n")
+        fake_binary.chmod(0o755)
+        work = self.root / "work"
+        work.mkdir()
+        spec = components.SOURCE_RECIPES["par2"].copy()
+        spec["version"] = "2.0.0"
+        job = InstallJob(Par2(), "2.0.0")
+        generated = {}
+
+        def inspect_source(_spec, src, _work):
+            header = pathlib.Path(src) / "include" / "par2" / "version.h"
+            generated["version_h"] = header.read_text() if header.exists() else ""
+            return str(fake_binary)
+
+        with patch.object(job, "_compile", side_effect=inspect_source), \
+                patch.object(components, "bin_dir", return_value=str(self.root / "bin")), \
+                patch.object(components, "_save_records_merge"):
+            job._build_source(spec, str(work), str(archive))
+
+        self.assertIn('#define PAR2_VERSION "2.0.0"', generated["version_h"])
+        self.assertIn("#define PAR2_VERSION_MAJOR 2", generated["version_h"])
+        self.assertIn("#define PAR2_VERSION_MINOR 0", generated["version_h"])
+        self.assertIn("#define PAR2_VERSION_PATCH 0", generated["version_h"])
+        self.assertEqual(job.phase, "done")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

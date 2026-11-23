@@ -62,6 +62,8 @@ _RUNNING = re.compile(r"7-Zip \(z\) ([0-9.]+)")
 # For a version missing here, check() falls back to the official notes (English)
 # and says so in the dialog rather than inventing a summary.
 NOTES_ZH = {
+    "26.06": [("feature", "改进 Linux split 工具所创建分卷的支持。"),
+              ("security", "修复若干错误和漏洞（官方未逐条列出 CVE 编号）。")],
     "26.05": [("format", "改进 Z 归档与 Mach-O 文件的解包代码。"),
               ("security", "修复若干缺陷与安全漏洞（官方未逐条列出 CVE 编号）。")],
     "26.04": [("fix", "修复若干缺陷与安全漏洞。")],

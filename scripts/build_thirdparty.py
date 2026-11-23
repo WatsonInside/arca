@@ -57,13 +57,14 @@ RECIPES = {
         "version_re": r"v([0-9]+\.[0-9]+\.[0-9]+)",
     },
     "par2": {
-        "version": "1.4.0",
+        "version": "2.0.0",
         "source": "https://codeload.github.com/Parchive/par2cmdline/tar.gz/refs/tags/v{version}",
         "compiler": "c++",
-        "flags": ["-O2", "-w", "-std=c++17", "-DHAVE_CONFIG_H"],
+        "flags": ["-O2", "-w", "-std=c++17", "-DHAVE_CONFIG_H",
+                  "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE_SOURCE", "-D_LARGE_FILES"],
         "sources": ["src/*.cpp"],
         "exclude": ["_test.cpp"],
-        "includes": ["src"],
+        "includes": ["src", "include", "libs/cxxopts"],
         "libs": [],
         "output": None,              # link every object into one binary
         "version_args": ["-V"],
@@ -94,6 +95,15 @@ RECIPES = {
 #define PACKAGE_STRING "par2cmdline {version}"
 #define PACKAGE_VERSION "{version}"
 #define VERSION "{version}"
+""",
+        # PAR2 2.0's CMake build generates this public version header.
+        "version_h": """#ifndef PAR2_VERSION_H
+#define PAR2_VERSION_H
+#define PAR2_VERSION "{version}"
+#define PAR2_VERSION_MAJOR {major}
+#define PAR2_VERSION_MINOR {minor}
+#define PAR2_VERSION_PATCH {patch}
+#endif
 """,
     },
 }
@@ -160,6 +170,13 @@ def build(name: str, force: bool = False) -> str:
     if spec.get("config_h"):
         with open(os.path.join(src, "src", "config.h"), "w") as fh:
             fh.write(spec["config_h"].format(version=version))
+    if spec.get("version_h"):
+        parts = (version.split(".") + ["0", "0"])[:3]
+        header = os.path.join(src, "include", "par2", "version.h")
+        os.makedirs(os.path.dirname(header), exist_ok=True)
+        with open(header, "w") as fh:
+            fh.write(spec["version_h"].format(
+                version=version, major=parts[0], minor=parts[1], patch=parts[2]))
 
     sources = []
     for pattern in spec["sources"]:

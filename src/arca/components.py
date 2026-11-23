@@ -426,6 +426,13 @@ class InstallJob:
         if spec.get("config_h"):
             with open(os.path.join(src, "src", "config.h"), "w") as fh:
                 fh.write(spec["config_h"].format(version=self.version))
+        if spec.get("version_h"):
+            parts = (self.version.split(".") + ["0", "0"])[:3]
+            header = os.path.join(src, "include", "par2", "version.h")
+            os.makedirs(os.path.dirname(header), exist_ok=True)
+            with open(header, "w") as fh:
+                fh.write(spec["version_h"].format(
+                    version=self.version, major=parts[0], minor=parts[1], patch=parts[2]))
 
         self._set(phase="build", percent=0.0, message="正在编译（需要命令行工具，约一分钟）…")
         binary = self._compile(spec, src, work)
@@ -536,6 +543,18 @@ PAR2_CONFIG_H = """#define STDC_HEADERS 1
 #define VERSION "{version}"
 """
 
+# PAR2 2.0 moved its public headers to include/par2 and generates version.h
+# with CMake.  Keep the existing compiler-only update path self-contained by
+# generating the same small header instead of adding a CMake dependency.
+PAR2_VERSION_H = """#ifndef PAR2_VERSION_H
+#define PAR2_VERSION_H
+#define PAR2_VERSION "{version}"
+#define PAR2_VERSION_MAJOR {major}
+#define PAR2_VERSION_MINOR {minor}
+#define PAR2_VERSION_PATCH {patch}
+#endif
+"""
+
 SOURCE_RECIPES = {
     "zstd": {
         "repo": "facebook/zstd",
@@ -562,15 +581,17 @@ SOURCE_RECIPES = {
         "tag": "v{version}",
         "archive": "par2cmdline-{version}.tar.gz",
         "compiler": "c++",
-        "flags": ["-O2", "-w", "-std=c++17", "-DHAVE_CONFIG_H"],
+        "flags": ["-O2", "-w", "-std=c++17", "-DHAVE_CONFIG_H",
+                  "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE_SOURCE", "-D_LARGE_FILES"],
         "sources": ["src/*.cpp"],
         "exclude": ["_test.cpp"],
-        "includes": ["src"],
+        "includes": ["src", "include", "libs/cxxopts"],
         "libs": [],
         "output": None,
         "version_args": ["-V"],
         "version_re": r"par2cmdline version ([0-9.]+)",
         "config_h": PAR2_CONFIG_H,
+        "version_h": PAR2_VERSION_H,
     },
 }
 
