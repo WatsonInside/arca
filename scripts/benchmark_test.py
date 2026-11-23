@@ -122,5 +122,23 @@ class ConcurrentInspectBenchmarkTests(unittest.TestCase):
         self.assertEqual(len(result["parallel"]["samples_seconds"]), 3)
 
 
+class ReplayGateTests(unittest.TestCase):
+    def test_semantic_mismatch_returns_nonzero_after_writing_json(self):
+        import tempfile
+
+        result = {"cases": {"concurrent_inspect": {"replay": {
+            "failed": 1, "failures": [{"case": "synthetic"}],
+        }}}}
+        with tempfile.TemporaryDirectory(prefix="arca-benchmark-gate-") as tmp:
+            output = os.path.join(tmp, "result.json")
+            argv = ["benchmark.py", "--json", output]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(benchmark, "run", return_value=result), \
+                    mock.patch("builtins.print"):
+                code = benchmark.main()
+            self.assertEqual(code, 1)
+            self.assertTrue(os.path.isfile(output))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -337,6 +337,10 @@ def main():
     print(f"\nJSON written to {out_path}")
     if result.get("skipped"):
         print(f"SKIPPED: {result['skipped']} (no numbers were fabricated)")
+    replay = result.get("cases", {}).get("concurrent_inspect", {}).get("replay", {})
+    if replay.get("failed"):
+        print(f"FAILED: {replay['failed']} semantic replay case(s) did not match")
+        return 1
     return 0
 
 
