@@ -3672,7 +3672,7 @@ function notifyUiReady() {
     bridge: NATIVE,
     dom: !!document.querySelector('#engine-card')
          && !!document.querySelector('#c-format')
-         && !!document.querySelector('#set-updnow'),
+         && !!document.querySelector('#btn-settings'),
     meta: !!meta.ok,
     engine: !!(meta.engine && meta.engine.engineVersion),
   };

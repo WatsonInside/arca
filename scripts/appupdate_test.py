@@ -509,14 +509,51 @@ class Tests(unittest.TestCase):
         script = a.relaunch_script(4242, bundle, log)
         self.assertIn('while kill -0 4242', script)
         self.assertIn('for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15', script)
-        self.assertIn('pgrep -f', script)                                  # liveness check
+        self.assertIn('alive()', script)
         self.assertIn('sleep 1; if alive', script)                         # checked twice
-        self.assertIn('/usr/bin/open -b com.arca.app', script)             # bundle-id fallback
+        self.assertIn(f'/usr/bin/open -b {a.util.BUNDLE_ID}', script)
+        self.assertNotIn('com.arca.app', script)
         self.assertIn("/usr/bin/open -n", script)
         self.assertIn("'%s'" % str(bundle), script)          # quoted for spaces
         self.assertIn('exec ', script)
         self.assertIn(str(bundle / 'Contents' / 'MacOS' / 'Arca'), script)
         self.assertIn(str(log), script)
+
+    def test_relaunch_liveness_binds_lock_pid_to_exact_executable(self):
+        """open returning 0 or activating another Arca is not restart success."""
+        bundle = self.root / 'Arca With Space.app'
+        log = self.root / 'relaunch.log'
+        script = a.relaunch_script(4242, bundle, log)
+        self.assertIn('instance.lock', script)
+        self.assertIn('/bin/ps -p', script)
+        self.assertIn(str(bundle / 'Contents' / 'MacOS' / 'Arca'), script)
+
+    def test_ui_ready_accepts_initial_page_before_settings_render(self):
+        """The first compress page must not depend on settings-only DOM."""
+        import subprocess
+        source = (ROOT / 'src/arca/web/app.js').read_text()
+        start = source.index('function notifyUiReady()')
+        end = source.index('\nasync function init()', start)
+        function = source[start:end]
+        script = '''
+const state = {meta: {ok: true, engine: {engineVersion: '26.06'}}};
+const NATIVE = true;
+const TOKEN = 'fixture-token';
+const initialDom = new Set(['#engine-card', '#c-format', '#btn-settings']);
+const document = {querySelector: (selector) => initialDom.has(selector) ? {} : null};
+const reports = [];
+function api(path, body) { reports.push({path, body}); return Promise.resolve(); }
+''' + function + '''
+notifyUiReady();
+const report = reports[0];
+if (!report || report.path !== '/ui-ready' || report.body.dom !== true) {
+  console.error(JSON.stringify(reports));
+  process.exit(1);
+}
+'''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         'initial-page DOM readiness was false: ' + result.stdout + result.stderr)
 
     def test_relaunch_script_really_restarts_a_bundle(self):
         import subprocess

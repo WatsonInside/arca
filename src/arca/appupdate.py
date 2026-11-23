@@ -215,12 +215,19 @@ def relaunch_script(pid: int, bundle, log) -> str:
     q = shlex.quote
     path = Path(bundle)
     exe = path / 'Contents' / 'MacOS' / 'Arca'
+    lock = Path(log).parent / 'instance.lock'
     return (
         f'exec >>{q(str(log))} 2>&1; '
         f'echo "--- $(date "+%Y-%m-%d %H:%M:%S") relaunch bundle={q(str(path))} oldpid={pid}"; '
         # Bounded wait: a zombie still answers kill -0.
         f'n=0; while kill -0 {pid} 2>/dev/null && [ $n -lt 30 ]; do sleep 0.2; n=$((n+1)); done; '
-        f'alive() {{ /usr/bin/pgrep -f {q(str(exe))} >/dev/null 2>&1; }}; '
+        # `open` can activate an already-running Arca. Accept only the PID in
+        # this isolated HOME's lock, and only when it is the expected binary.
+        f'alive() {{ '
+        f'p=$(/usr/bin/sed -n {q(r"s/^pid=\([0-9][0-9]*\) home=.*/\1/p")} {q(str(lock))} 2>/dev/null | /usr/bin/head -n 1); '
+        f'[ -n "$p" ] || return 1; '
+        f'[ "$(/bin/ps -p "$p" -o comm= 2>/dev/null)" = {q(str(exe))} ]; '
+        f'}}; '
         'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do '
         f'  if /usr/bin/open -n {q(str(path))}; then '
         '    sleep 1; '
@@ -234,8 +241,8 @@ def relaunch_script(pid: int, bundle, log) -> str:
         '  fi; '
         '  sleep 0.5; '
         'done; '
-        'echo "trying bundle id com.arca.app"; '
-        'if /usr/bin/open -b com.arca.app; then sleep 1; if alive; then sleep 1; if alive; then echo "open -b ok"; exit 0; fi; fi; fi; '
+        f'echo "trying bundle id {util.BUNDLE_ID}"; '
+        f'if /usr/bin/open -b {q(util.BUNDLE_ID)}; then sleep 1; if alive; then sleep 1; if alive; then echo "open -b ok"; exit 0; fi; fi; fi; '
         f'echo "starting the binary directly: {q(str(exe))}"; '
         f'exec {q(str(exe))}'
     )
