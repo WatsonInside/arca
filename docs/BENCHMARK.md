@@ -19,6 +19,9 @@ build/venv/bin/python -S -E -B scripts/benchmark_ui.py
 - 语料全部由固定脚本生成在 `build/`（`build/bench-*`、`build/bench-ui-*`，Chrome profile 在 `build/chrome-bench-*`；UI 基准的 HOME 用系统临时目录），跑完自动删除；不读取用户文件。
 - 磁盘不足时脚本明确输出 `SKIPPED` 并退出 0，不会编造数字。
 - 峰值内存取 `resource.getrusage(RUSAGE_SELF).ru_maxrss`（macOS 单位为字节），CPU 取 `time.process_time()`。
+- 并发 inspect 先对固定合成的空 ZIP、Unicode 目录/文件名与损坏 ZIP 做顺序/并发回放，逐项比较返回值或异常类型与消息；结果写入 `cases.concurrent_inspect.replay`。不会录制真实用户调用或隐私数据。
+- 并发计时默认执行 7 轮，逐轮交换顺序/并发实现谁先运行；`seconds` 与 `cpu_seconds` 是中位数，`samples_seconds` 保留每轮原始墙钟样本。历史基线表保留当时的单次测量口径，不与新版中位数直接混比。
+- 工具契约测试：`build/venv/bin/python -S -E -B scripts/benchmark_test.py`；也已纳入 `all_test.py --only benchmark`。
 
 ## 基线（本机，2026-10-26）
 

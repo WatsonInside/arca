@@ -83,6 +83,73 @@ def timed(fn):
     }, value
 
 
+def _outcome(fn, args, kwargs):
+    """Capture return semantics or an ordinary exception without hiding exits."""
+    try:
+        return ("return", fn(*args, **kwargs))
+    except Exception as exc:
+        return ("raise", f"{type(exc).__name__}: {exc}")
+
+
+def _shown(outcome):
+    kind, value = outcome
+    return repr(value) if kind == "return" else value
+
+
+def replay_calls(reference, candidate, cases):
+    """Replay fixed ``(name, args, kwargs)`` cases and compare exact semantics.
+
+    Cases must come from synthetic fixtures, never recorded user archives,
+    paths, passwords or other private inputs.
+    """
+    report = {"total": 0, "passed": 0, "failed": 0, "failures": []}
+    for name, args, kwargs in cases:
+        report["total"] += 1
+        expected = _outcome(reference, args, kwargs)
+        actual = _outcome(candidate, args, kwargs)
+        if actual == expected:
+            report["passed"] += 1
+        else:
+            report["failed"] += 1
+            report["failures"].append({
+                "case": name,
+                "expected": _shown(expected),
+                "actual": _shown(actual),
+            })
+    return report
+
+
+def interleaved_median(reference, candidate, *, rounds=7):
+    """Time two implementations in alternating order and compare medians."""
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or rounds <= 0:
+        raise ValueError("rounds must be a positive integer")
+    samples = {"reference": [], "candidate": []}
+    implementations = {"reference": reference, "candidate": candidate}
+    for index in range(rounds):
+        order = ("reference", "candidate")
+        if index % 2:
+            order = tuple(reversed(order))
+        for name in order:
+            stats, _ = timed(implementations[name])
+            samples[name].append(stats)
+
+    import statistics
+
+    result = {"rounds": rounds, "order": "alternating"}
+    for name in ("reference", "candidate"):
+        rows = samples[name]
+        result[name] = {
+            "seconds": statistics.median(row["seconds"] for row in rows),
+            "cpu_seconds": statistics.median(row["cpu_seconds"] for row in rows),
+            "peak_memory_bytes": max(row["peak_memory_bytes"] for row in rows),
+            "samples_seconds": [row["seconds"] for row in rows],
+        }
+    candidate_seconds = result["candidate"]["seconds"]
+    result["speedup"] = (round(result["reference"]["seconds"] / candidate_seconds, 2)
+                         if candidate_seconds else None)
+    return result
+
+
 def check_disk(path: Path, needed: int) -> str:
     free = shutil.disk_usage(path).free
     if free < needed:
@@ -140,6 +207,36 @@ def compress_extract(work: Path, big_mib: int):
     return comp_result, extract_result, digest_ok
 
 
+def concurrent_inspect(engine, archives, edge_archives, workers, *, rounds=7):
+    """Check sequential/parallel equivalence, then compare interleaved medians."""
+    import concurrent.futures
+
+    def parallel_one(path):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            return pool.submit(engine.inspect, path).result()
+
+    cases = [(Path(path).name, (path,), {}) for path in edge_archives]
+    replay = replay_calls(engine.inspect, parallel_one, cases)
+
+    def sequential():
+        return [engine.inspect(path) for path in archives]
+
+    def parallel():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(engine.inspect, archives))
+
+    comparison = interleaved_median(sequential, parallel, rounds=rounds)
+    return {
+        "workers": workers,
+        "rounds": comparison["rounds"],
+        "order": comparison["order"],
+        "replay": replay,
+        "sequential": comparison["reference"],
+        "parallel": comparison["candidate"],
+        "speedup": comparison["speedup"],
+    }
+
+
 def run(mode: str, work: Path, keep: bool):
     cfg = CASES[mode]
     result = {
@@ -188,24 +285,18 @@ def run(mode: str, work: Path, keep: bool):
         make_zip(path, 1000)
         archives.append(str(path))
 
-    def sequential():
-        return [engine.inspect(p) for p in archives]
-
-    import concurrent.futures
-
-    def parallel():
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cfg["workers"]) as pool:
-            return list(pool.map(engine.inspect, archives))
-
-    seq_stats, _ = timed(sequential)
-    par_stats, _ = timed(parallel)
-    result["cases"]["concurrent_inspect"] = {
-        "workers": cfg["workers"],
-        "sequential": seq_stats,
-        "parallel": par_stats,
-        "speedup": round(seq_stats["seconds"] / par_stats["seconds"], 2)
-        if par_stats["seconds"] else None,
-    }
+    edge_empty = work / "edge-empty.zip"
+    with zipfile.ZipFile(edge_empty, "w"):
+        pass
+    edge_unicode = work / "edge-unicode.zip"
+    with zipfile.ZipFile(edge_unicode, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("目录/", b"")
+        zf.writestr("目录/中文-😀.txt", b"fixed synthetic payload\n")
+    edge_broken = work / "edge-broken.zip"
+    edge_broken.write_bytes(b"not a ZIP archive\n")
+    result["cases"]["concurrent_inspect"] = concurrent_inspect(
+        engine, archives,
+        [str(edge_empty), str(edge_unicode), str(edge_broken)], cfg["workers"])
 
     result["cleanup"] = {"kept": keep, "root": str(work) if keep else "removed"}
     return result
