@@ -47,6 +47,23 @@ class ProfileCallTests(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertTrue(any(row["name"] == "_parse_slt" for row in report["top"]))
 
+    def test_profile_rows_use_checkout_root_not_literal_arca_directory(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory(prefix="arca-profile-root-") as tmp:
+            root = Path(tmp) / "release-clean"
+            output = Path(tmp) / "profile.pstats"
+            filename = str(root / "src" / "arca" / "engine.py")
+            stats = {(filename, 123, "_parse_slt"): (1, 1, 0.001, 0.001, {})}
+            with mock.patch.object(hotspot_profile, "ROOT", root), \
+                    mock.patch.object(hotspot_profile.pstats, "Stats") as stats_type:
+                stats_type.return_value.stats = stats
+                report, _value = hotspot_profile.profile_call(
+                    "slt", lambda: {"preserved": True}, output)
+
+            self.assertEqual([row["name"] for row in report["top"]], ["_parse_slt"])
+            self.assertEqual(report["top"][0]["file"], "engine.py")
+
     def test_small_run_covers_all_five_synthetic_hotspots(self):
         with tempfile.TemporaryDirectory(prefix="arca-hotspot-run-") as tmp:
             root = Path(tmp)

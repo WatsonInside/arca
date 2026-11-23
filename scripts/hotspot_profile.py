@@ -95,15 +95,15 @@ def profile_call(case, fn, output: Path):
     }
     profiler.dump_stats(str(output))
     rows = []
+    source_root = str(ROOT / "src" / "arca") + os.sep
     for (filename, line, name), (_cc, calls, own, cumulative, _callers) in \
             pstats.Stats(profiler).stats.items():
-        marker = os.sep + os.path.join("arca", "src", "arca") + os.sep
-        if marker not in filename:
+        if not filename.startswith(source_root):
             continue
         rows.append((cumulative, own, calls, filename, line, name))
     for cumulative, own, calls, filename, line, name in sorted(rows, reverse=True)[:12]:
         report["top"].append({
-            "file": filename.split(marker, 1)[1], "line": line, "name": name,
+            "file": os.path.relpath(filename, source_root), "line": line, "name": name,
             "calls": calls, "own_seconds": own, "cumulative_seconds": cumulative,
         })
     return report, value
