@@ -14,7 +14,7 @@ import tempfile
 import unicodedata
 
 APP_NAME = "Arca"
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 BUNDLE_ID = "com.arca.archive"
 
 UNITS = ("B", "KB", "MB", "GB", "TB")
