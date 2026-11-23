@@ -231,6 +231,34 @@ class EntryValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             srv._selected_bytes(["nope.txt"], full)
 
+    def test_selected_bytes_matches_reference_on_boundary_matrix(self):
+        def reference(entries, full):
+            known = {(e.get("path") or "").rstrip("/"): e for e in full}
+            missing = [name for name in entries if name not in known]
+            if missing:
+                raise ValueError("条目不属于该压缩包：" + missing[0])
+
+            def selected(path):
+                norm = (path or "").rstrip("/")
+                return any(norm == sel or norm.startswith(sel + "/") for sel in entries)
+
+            return sum(int(e.get("size") or 0) for e in full
+                       if not e.get("isDir") and selected(e.get("path") or ""))
+
+        paths = ["", "/", "a", "a/", "a//b", "a/b", "a/b/c", "ab",
+                 "d//x", "d/", "中文/😀.txt"]
+        full = [{"path": path, "size": index + 1, "isDir": path.endswith("/")}
+                for index, path in enumerate(paths)]
+        known = sorted({(entry["path"] or "").rstrip("/") for entry in full})
+        selections = [[name] for name in known]
+        selections += [[left, right] for left in known for right in known]
+        for selected in selections:
+            with self.subTest(selected=selected):
+                self.assertEqual(srv._selected_bytes(selected, full),
+                                 reference(selected, full))
+        with self.assertRaisesRegex(ValueError, "missing"):
+            srv._selected_bytes(["missing", "also-missing"], full)
+
 
 class PartialExtractHttpTests(unittest.TestCase):
     @classmethod

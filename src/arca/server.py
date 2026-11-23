@@ -1017,12 +1017,21 @@ def _selected_bytes(entries, full):
     if missing:
         raise ValueError("条目不属于该压缩包：" + missing[0])
 
-    def selected(path):
+    selected = set(entries)
+
+    def covered(path):
         norm = (path or "").rstrip("/")
-        return any(norm == sel or norm.startswith(sel + "/") for sel in entries)
+        # Exact entry, then each ancestor: path-depth set lookups instead of
+        # scanning every selected directory for every archive entry.
+        while norm not in selected:
+            slash = norm.rfind("/")
+            if slash < 0:
+                return False
+            norm = norm[:slash]
+        return True
 
     return sum(int(e.get("size") or 0) for e in full
-               if not e.get("isDir") and selected(e.get("path") or ""))
+               if not e.get("isDir") and covered(e.get("path") or ""))
 
 
 class _ArcaHTTPServer(ThreadingHTTPServer):

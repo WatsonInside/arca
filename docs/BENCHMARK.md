@@ -12,16 +12,35 @@
 build/venv/bin/python -S -E -B scripts/benchmark.py --mode quick
 build/venv/bin/python -S -E -B scripts/benchmark.py --mode full
 build/venv/bin/python -S -E -B scripts/benchmark_ui.py
+build/venv/bin/python -S -E -B scripts/hotspot_profile.py --entries 50000
+build/venv/bin/python -S -E -B scripts/hotspot_profile.py --entries 100000
 ```
 
 - `quick`：1000 条 ZIP inspect、64 MiB 随机文件 7z 压缩+解压、2000 文件/200 目录扫描、4 路并发 inspect。
 - `full`：同样的用例，512 MiB / 20000 文件 / 1000 目录 / 8 路并发。**不是** 1 GB 或 10 万文件的测试。
+- `hotspot_profile.py`：独立的大规模合成语料压力分析，不改变上述 quick/full 基线；分别 profile ZIP inspect、legacy GBK ZIP plan、7z SLT 解析、覆盖条目剪枝与选中字节计算，语料生成不计入 profile 时间。
 - 语料全部由固定脚本生成在 `build/`（`build/bench-*`、`build/bench-ui-*`，Chrome profile 在 `build/chrome-bench-*`；UI 基准的 HOME 用系统临时目录），跑完自动删除；不读取用户文件。
 - 磁盘不足时脚本明确输出 `SKIPPED` 并退出 0，不会编造数字。
 - 峰值内存取 `resource.getrusage(RUSAGE_SELF).ru_maxrss`（macOS 单位为字节），CPU 取 `time.process_time()`。
-- 并发 inspect 先对固定合成的空 ZIP、Unicode 目录/文件名与损坏 ZIP 做顺序/并发回放，逐项比较返回值或异常类型与消息；结果写入 `cases.concurrent_inspect.replay`。不会录制真实用户调用或隐私数据。
+- 并发 inspect 先对固定合成的空 ZIP、Unicode 目录/文件名与损坏 ZIP 做顺序/并发回放，逐项比较返回值或异常类型与消息；结果写入 `cases.concurrent_inspect.replay`。不会录制真实用户调用或隐私数据。回放出现不一致时保存 JSON 并退出 1。
 - 并发计时默认执行 7 轮，逐轮交换顺序/并发实现谁先运行；`seconds` 与 `cpu_seconds` 是中位数，`samples_seconds` 保留每轮原始墙钟样本。历史基线表保留当时的单次测量口径，不与新版中位数直接混比。
-- 工具契约测试：`build/venv/bin/python -S -E -B scripts/benchmark_test.py`；也已纳入 `all_test.py --only benchmark`。
+- 工具契约测试：`build/venv/bin/python -S -E -B scripts/benchmark_test.py` 和 `scripts/hotspot_profile_test.py`；分别纳入 `all_test.py --only benchmark` 与 `--only hotspot-profile`。
+
+## 大规模热点专项（本机，2026-11-23）
+
+环境为 macOS 27.3 / arm64 / 10 CPU / 16 GB / Python 3.13.12；两档均使用 1,000 个目录选择，数值为单次 cProfile 插桩测量，不作为性能提升或 CI 阈值。
+
+| 操作 | 50,000 条目 | 100,000 条目 |
+| --- | ---: | ---: |
+| ZIP inspect | 0.3617 s（zipfile 快路径） | 2.2232 s（ZIP64 走 7zz，路径不同） |
+| legacy GBK ZIP plan | 0.5047 s | 0.6640 s |
+| 7z SLT 解析 | 0.2773 s | 0.4532 s |
+| 覆盖条目剪枝 | 0.1158 s | 0.1327 s |
+| 选中字节计算 | **4.9071 s** | **9.6447 s** |
+
+优化前最明确的热点在 `server._selected_bytes`：100,000 条目、1,000 个目录选择时，内部前缀匹配生成器执行 50,150,000 次，墙钟 9.6447 s、主进程 CPU 9.2625 s。100,000 条目 ZIP 的 ZIP64 快路径回退也已被夹具覆盖，不能与 50,000 条目的 zipfile 数字直接作同路径扩展比较。
+
+随后将选中字节计算改为“精确条目＋逐级祖先”的集合查找，避免每个归档条目扫描全部选择。50,000 条目、1,000 个目录选择、5 轮交错且无 cProfile 的 A/B 中，原实现中位数 0.8607 s，新实现 0.0103 s，speedup 83.56×；6 个固定语义回放全部一致，另有边界矩阵回归。该数字只代表此合成压力场景，不外推为整个应用的加速比。
 
 ## 基线（本机，2026-10-26）
 
