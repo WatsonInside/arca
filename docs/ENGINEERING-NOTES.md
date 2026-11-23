@@ -249,6 +249,9 @@ zstd 与 PAR2 都是外部程序，同样会出新版本（par2cmdline 从 0.8.1
 
 - **装在哪里**：`~/Library/Application Support/Arca/components/`，应用包不动（原因同引擎更新：  
   arm64 上原地改写会让签名失效）。装好后当前进程立刻切换，设置里可「恢复内置」。
+- **升级后的选择**：用户组件与内置组件都能识别版本时使用较新的一个；版本相同保留用户组件，
+  版本不可识别时保持原有选择，显式传入的二进制路径永远优先。旧用户组件不会被删除，避免应用
+  升级后旧组件继续遮蔽较新的内置版本。
 - **为什么源码编译而不是用包**：Homebrew 的 par2 bottle 依赖 `@@HOMEBREW_PREFIX@@/opt/libomp`，  
   换台机器就报 `___kmpc_barrier` 找不到。par2 2.0.0 改用 CMake 源码布局，除 `src` 外还需要
   `include`、`libs/cxxopts`，以及构建时生成的 `include/par2/version.h`。所以配方是显式的：

@@ -128,6 +128,23 @@ def is_newer(latest, current) -> bool:
     return parse_version(latest) > parse_version(current)
 
 
+def is_newer_component(latest, current) -> bool:
+    """Compare every numeric component; malformed or missing versions never win."""
+    def parts(value):
+        text = str(value or "")
+        if not re.fullmatch(r"\d+(?:\.\d+)*", text):
+            return ()
+        return tuple(int(part) for part in text.split("."))
+
+    candidate, installed = parts(latest), parts(current)
+    if not candidate or not installed:
+        return False
+    width = max(len(candidate), len(installed))
+    candidate += (0,) * (width - len(candidate))
+    installed += (0,) * (width - len(installed))
+    return candidate > installed
+
+
 # ------------------------------------------------------------------ http helpers
 def _get(url: str, timeout: float = 15.0) -> bytes:
     req = urllib.request.Request(url, headers={

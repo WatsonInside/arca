@@ -24,9 +24,7 @@ import tarfile
 import threading
 import time
 
-from . import procs
-
-from . import util
+from . import procs, updates, util
 
 # UI slider position -> zstd level.  The top two positions both land on 19:
 # 20-22 need --ultra, gain almost nothing and double the time.
@@ -43,8 +41,8 @@ class ZstdError(Exception):
 def candidates():
     here = os.path.dirname(os.path.abspath(__file__))
     return [
-        # A user-updated copy wins over the bundled one (components.py writes
-        # it here), which is what makes the update actually take effect.
+        # Component updates live here; find_binary compares their version with
+        # the bundled copy so an app upgrade cannot leave an older one winning.
         os.path.join(util.app_support_dir(), "components", "zstd"),
         os.path.join(here, "bin", "zstd"),
         os.path.join(here, "..", "vendor", "zstd"),
@@ -58,11 +56,25 @@ def find_binary(user_path: str | None = None) -> tuple[str | None, str]:
     if user_path and os.path.isfile(user_path) and os.access(user_path, os.X_OK):
         return user_path, "user"
     home = os.path.abspath(util.app_support_dir())
+    installed = []
     for p in candidates():
         p = os.path.abspath(p)
         if os.path.isfile(p) and os.access(p, os.X_OK):
             # Installed by the component updater -> "user", not "bundled".
-            return p, ("user" if p.startswith(home + os.sep) else "bundled")
+            installed.append((p, "user" if p.startswith(home + os.sep) else "bundled"))
+    if installed:
+        choice = installed[0]
+        if choice[1] == "user":
+            bundled = next((item for item in installed[1:] if item[1] == "bundled"), None)
+            if bundled:
+                user_version = version_of(choice[0])
+                bundled_version = version_of(bundled[0])
+                # App upgrades must not leave an older component shadowing a
+                # newer bundled one. Unknown versions keep the legacy choice.
+                if (user_version and bundled_version
+                        and updates.is_newer_component(bundled_version, user_version)):
+                    choice = bundled
+        return choice
     import shutil
     p = shutil.which("zstd")
     return (p, "path") if p else (None, "none")

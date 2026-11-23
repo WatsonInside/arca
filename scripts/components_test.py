@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from arca import components, updates  # noqa: E402
+from arca import components, par2, updates, zst  # noqa: E402
 from arca.components import ComponentError, InstallJob, Par2, SevenZip, Zstd  # noqa: E402
 from _paths import build_dir
 
@@ -261,6 +261,73 @@ class InstallSafetyTests(unittest.TestCase):
             components._install_binary(str(source), str(target))
         self.assertEqual(target.read_bytes(), b"old-binary")
         self.assertFalse(os.path.exists(str(target) + ".new"))
+
+
+class HelperBinarySelectionTests(unittest.TestCase):
+    """旧的用户组件不得覆盖更新的应用内置组件。"""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(dir=build_dir())
+        self.addCleanup(temp.cleanup)
+        self.root = pathlib.Path(temp.name).resolve()
+
+    def _binary(self, module, role, version):
+        path = self.root / (module.__name__.rpartition(".")[2] + "-" + role)
+        if module is par2:
+            output = "par2cmdline version " + version
+        else:
+            output = "zstd command line interface v" + version
+        if version == "unknown":
+            output = "version cannot be identified"
+        path.write_text("#!/bin/sh\necho '%s'\n" % output)
+        path.chmod(0o755)
+        return path
+
+    def _select(self, module, user_version, bundled_version):
+        user = self._binary(module, "user", user_version)
+        bundled = self._binary(module, "bundled", bundled_version)
+        support = self.root / (module.__name__.rpartition(".")[2] + "-support")
+        components_dir = support / "components"
+        components_dir.mkdir(parents=True)
+        user = user.replace(components_dir / user.name)
+        with patch.object(module.util, "app_support_dir", return_value=str(support)), \
+                patch.object(module, "candidates", return_value=[str(user), str(bundled)]):
+            return module.find_binary(), user, bundled
+
+    def test_newer_bundled_binary_wins_over_older_user_component(self):
+        for module, old, new in ((par2, "1.4.0", "2.0.0"), (zst, "1.5.6", "1.5.7")):
+            with self.subTest(module=module.__name__):
+                (path, source), _user, bundled = self._select(module, old, new)
+                self.assertEqual((path, source), (str(bundled), "bundled"))
+
+    def test_newer_user_component_still_wins(self):
+        for module, bundled_version, user_version in (
+                (par2, "2.0.0", "2.1.0"), (zst, "1.5.7", "1.5.8")):
+            with self.subTest(module=module.__name__):
+                (path, source), user, _bundled = self._select(module, user_version, bundled_version)
+                self.assertEqual((path, source), (str(user), "user"))
+
+    def test_same_version_keeps_user_component(self):
+        for module, version in ((par2, "2.0.0"), (zst, "1.5.7")):
+            with self.subTest(module=module.__name__):
+                (path, source), user, _bundled = self._select(module, version, version)
+                self.assertEqual((path, source), (str(user), "user"))
+
+    def test_unknown_user_version_preserves_existing_selection(self):
+        for module, bundled_version in ((par2, "2.0.0"), (zst, "1.5.7")):
+            with self.subTest(module=module.__name__):
+                (path, source), user, _bundled = self._select(module, "unknown", bundled_version)
+                self.assertEqual((path, source), (str(user), "user"))
+
+    def test_explicit_binary_path_still_wins_without_version_comparison(self):
+        for module in (par2, zst):
+            with self.subTest(module=module.__name__):
+                explicit = self._binary(module, "explicit", "0.1.0")
+                support = self.root / (module.__name__.rpartition(".")[2] + "-explicit-support")
+                support.mkdir()
+                with patch.object(module.util, "app_support_dir", return_value=str(support)):
+                    path, source = module.find_binary(str(explicit))
+                self.assertEqual((path, source), (str(explicit), "user"))
 
 
 class Par2TwoSourceRecipeTests(unittest.TestCase):

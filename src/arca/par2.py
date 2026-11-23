@@ -25,7 +25,7 @@ import re
 import subprocess
 import threading
 
-from . import procs, util
+from . import procs, updates, util
 
 REDUNDANCY = (3, 5, 10, 15)          # percent presets offered in the UI
 
@@ -49,12 +49,26 @@ def find_binary(user_path: str | None = None) -> tuple[str | None, str]:
     if user_path and os.path.isfile(user_path) and os.access(user_path, os.X_OK):
         return user_path, "user"
     home = os.path.abspath(util.app_support_dir())
+    installed = []
     for p in candidates():
         p = os.path.abspath(p)
         if os.path.isfile(p) and os.access(p, os.X_OK):
             # A copy installed by the component updater lives in app support and
             # must not be reported as "built in".
-            return p, ("user" if p.startswith(home + os.sep) else "bundled")
+            installed.append((p, "user" if p.startswith(home + os.sep) else "bundled"))
+    if installed:
+        choice = installed[0]
+        if choice[1] == "user":
+            bundled = next((item for item in installed[1:] if item[1] == "bundled"), None)
+            if bundled:
+                user_version = version_of(choice[0])
+                bundled_version = version_of(bundled[0])
+                # App upgrades must not leave an older component shadowing a
+                # newer bundled one. Unknown versions keep the legacy choice.
+                if (user_version and bundled_version
+                        and updates.is_newer_component(bundled_version, user_version)):
+                    choice = bundled
+        return choice
     import shutil
     p = shutil.which("par2")
     return (p, "path") if p else (None, "none")
